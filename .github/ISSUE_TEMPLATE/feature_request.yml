@@ -1,0 +1,31 @@
+name: Предложение
+description: Предложить улучшение приложения.
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Задача пользователя
+      description: Что вы пытаетесь сделать и что мешает сейчас? Опишите сценарий проведения CTF, если это важно.
+    validations:
+      required: true
+
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Желаемое поведение
+      description: Как должно работать приложение и по какому результату можно проверить улучшение?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Другие варианты
+      description: Какие обходные решения или альтернативы вы уже рассматривали?
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Дополнительный контекст
+      description: Связанные пункты ТЗ, примеры интерфейса или ограничения стенда. Удалите секреты из текста и вложений.

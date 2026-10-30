@@ -1,0 +1,476 @@
+# Публичная сводка проверок
+
+Подготовлено 30 октября 2026 года. Это обезличенная сводка ранее выполненных проверок и индекс исторических артефактов. Подготовка к публикации не включает новые runtime-испытания.
+
+**Полная приёмка MVP не завершена (`mvp_accepted=false`).** В A01–A39 остаются 19 критериев, подтверждённых в описанных ограниченных профилях, и 20 частичных. Испытания целевого `competition-4g` (Linux/amd64, 4 vCPU, 4 GiB RAM, диск 40 GiB) и VM-проверки отложены. [Полная матрица и границы результатов](../../../docs/progress.md#матрица-a01a39), [Proxy P01–P16](../../../docs/http-proxy-waf-plan.md), [Capture C01–C10](../../../docs/packet-capture-plan.md).
+
+В Git доступны этот индекс, [машинная сводка](public-summary.json), исходники тестов и [инструкции повторения](../../../docs/testing.md). Сырые JSON-отчёты, журналы, PCAP, cookie jars и снимки экрана сохранены локально и исключены из публикации. Исторические имена ниже нужны для сопоставления со ссылками документации; они ведут на описания, а не на скачивание исходных артефактов. Точные приватные diagnostics, image inventories и данные игровых записей здесь не воспроизводятся.
+
+## Границы подтверждений
+
+<a id="mvp-local"></a>
+
+### Исторические MVP-проверки
+
+Синтетические Compose/workflow/fault/storage/backup сценарии и адаптированные браузерные циклы пяти SibirCTF выполнены в указанных в документации профилях. Это преимущественно Linux/arm64 OrbStack; отдельные amd64 запуски использовали эмуляцию.
+
+- Старые артефакты предшествуют части исправлений и новым модулям.
+- Пятиминутная нагрузка на общей VM не подтверждает competition-4g и часовой soak.
+
+<a id="native-linux"></a>
+
+### Linux/amd64 VM
+
+Подтверждены Compose, 13 workflow checks, backup/restore, native race/vet и четыре полных цикла BioGuard/ncdex/CyberBank/neuroLinks с сохранением данных.
+
+- Финальный итог EyeSee неизвестен после потери SSH.
+- Короткий load preflight не прошёл; повторились kernel stalls.
+- Пятиминутный benchmark, часовой soak и новая аварийная серия не завершены.
+- Текущая доступность VM и финальный возврат временного DNS не подтверждены.
+
+<a id="proxy-local"></a>
+
+### HTTP Proxy, TLS и WAF
+
+Локально проверены HTTP/TLS процессы, маршрутизация/трафик, rate limits и bans; реализованы групповой перенос/возврат портов и explicit HTTPS/2 termination.
+
+- Локальные unit/process проверки не заменяют реальный Compose cutover и checker.
+- P01–P16 и совместная вместимость 4 GiB на целевом хосте открыты.
+
+<a id="traffic-local"></a>
+
+### Пакеты, потоки и gRPC
+
+Разработка 10.0–10.4 завершена в bounded профилях: PCAP, TCP/UDP, HTTP2/gRPC/descriptors и интерфейс анализа. Финальные локальные API/process/browser проверки и Linux cross-build прошли.
+
+- Live AF_PACKET, реальные NAT/bridge/veth/checker и CPU/RAM/drop rate не приняты.
+- Этап 10.5/C10 и целевая Linux/Compose/CTF приёмка отложены.
+- Cross-build не является запуском на Linux.
+
+## Открытая приёмка
+
+Требуются стабильный Linux/amd64 стенд, итог EyeSee и общий postflight пяти сервисов, нагрузка и часовой soak на 4 GiB, аварийные проверки daemon/registry/fsync/power loss, а также целевые Compose/CTF проверки Proxy/WAF и живого захвата. Исторические успешные smoke и локальные cross-build не повышают эти статусы. Причина зависаний VM не установлена окончательно; влияние одной только нагрузки приложения не доказано.
+
+## Индекс исторических артефактов
+
+Индекс сохраняет названия артефактов, которые упоминаются в документации, включая неудачные и промежуточные попытки. Запись в индексе сама по себе не означает PASS. Результат и применимые ограничения указаны в связанных матрицах и разделах выше.
+
+<a id="report-apply-efbig-linux-2026-10-20-json"></a>
+
+### `apply-efbig-linux-2026-10-20.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-compose-metrics-smoke-2026-10-19-json"></a>
+
+### `compose-metrics-smoke-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-compose-smoke-2026-10-19-json"></a>
+
+### `compose-smoke-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-compose-smoke-2026-10-20-json"></a>
+
+### `compose-smoke-2026-10-20.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-container-release-amd64-emulated-2026-10-19-json"></a>
+
+### `container-release-amd64-emulated-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-container-release-smoke-2026-10-19-json"></a>
+
+### `container-release-smoke-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-executor-peer-linux-2026-10-19-json"></a>
+
+### `executor-peer-linux-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-fault-multi-component-2026-10-20-json"></a>
+
+### `fault-multi-component-2026-10-20.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-fault-release-smoke-2026-10-19-json"></a>
+
+### `fault-release-smoke-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-fault-release-smoke-2026-10-20-json"></a>
+
+### `fault-release-smoke-2026-10-20.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-fixture-smoke-2026-10-19-json"></a>
+
+### `fixture-smoke-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-git-bundled-source-limits-2026-10-19-json"></a>
+
+### `git-bundled-source-limits-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-http-proxy-cutover-tls-2026-10-30-json"></a>
+
+### `http-proxy-cutover-tls-2026-10-30.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [HTTP Proxy, TLS и WAF](#proxy-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-http-proxy-group-cutover-2026-10-30-json"></a>
+
+### `http-proxy-group-cutover-2026-10-30.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [HTTP Proxy, TLS и WAF](#proxy-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-http-proxy-process-smoke-2026-10-30-json"></a>
+
+### `http-proxy-process-smoke-2026-10-30.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [HTTP Proxy, TLS и WAF](#proxy-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-http-proxy-prototype-2026-10-30-json"></a>
+
+### `http-proxy-prototype-2026-10-30.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [HTTP Proxy, TLS и WAF](#proxy-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-http-proxy-tls-process-smoke-2026-10-30-json"></a>
+
+### `http-proxy-tls-process-smoke-2026-10-30.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [HTTP Proxy, TLS и WAF](#proxy-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-journal-enospc-2026-10-20-json"></a>
+
+### `journal-enospc-2026-10-20.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-linux-backup-maintenance-2026-10-19-json"></a>
+
+### `linux-backup-maintenance-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-linux-git-isolation-2026-10-19-json"></a>
+
+### `linux-git-isolation-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-linux-mount-boundary-regression-2026-10-19-json"></a>
+
+### `linux-mount-boundary-regression-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-mvp-acceptance-2026-10-20-json"></a>
+
+### `mvp-acceptance-2026-10-20.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-mvp-functionality-smoke-2026-10-19-json"></a>
+
+### `mvp-functionality-smoke-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-mvp-pipeline-negatives-smoke-2026-10-20-json"></a>
+
+### `mvp-pipeline-negatives-smoke-2026-10-20.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-mvp-workflows-smoke-2026-10-20-json"></a>
+
+### `mvp-workflows-smoke-2026-10-20.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-bioguard-data-postflight-2026-10-29-json"></a>
+
+### `native-bioguard-data-postflight-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-compose-smoke-2026-10-29-json"></a>
+
+### `native-compose-smoke-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-current-acceptance-2026-10-29-json"></a>
+
+### `native-current-acceptance-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-fetch-dns-diagnostic-2026-10-29-json"></a>
+
+### `native-fetch-dns-diagnostic-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-five-sibir-cycles-attempt1-2026-10-29-json"></a>
+
+### `native-five-sibir-cycles-attempt1-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-five-sibir-review-deployment-2026-10-29-json"></a>
+
+### `native-five-sibir-review-deployment-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-five-sibir-review-ready-2026-10-29-json"></a>
+
+### `native-five-sibir-review-ready-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-go-race-vet-2026-10-29-json"></a>
+
+### `native-go-race-vet-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-go-race-vet-attempt1-2026-10-29-json"></a>
+
+### `native-go-race-vet-attempt1-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-kernel-stalls-acceptance-2026-10-29-json"></a>
+
+### `native-kernel-stalls-acceptance-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-mvp-acceptance-2026-10-29-json"></a>
+
+### `native-mvp-acceptance-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-mvp-workflows-2026-10-29-json"></a>
+
+### `native-mvp-workflows-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-panel-load-preflight-attempt1-2026-10-29-json"></a>
+
+### `native-panel-load-preflight-attempt1-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-preacceptance-backup-2026-10-29-json"></a>
+
+### `native-preacceptance-backup-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-unprepared-host-2026-10-29-json"></a>
+
+### `native-unprepared-host-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-vbox-full-log-review-2026-10-29-json"></a>
+
+### `native-vbox-full-log-review-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-vm-inventory-2026-10-29-json"></a>
+
+### `native-vm-inventory-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-native-vm-kernel-stability-2026-10-29-json"></a>
+
+### `native-vm-kernel-stability-2026-10-29.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Linux/amd64 VM](#native-linux), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-observation-load-2026-10-19-json"></a>
+
+### `observation-load-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-observation-load-2026-10-20-json"></a>
+
+### `observation-load-2026-10-20.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-packet-capture-local-2026-10-30-json"></a>
+
+### `packet-capture-local-2026-10-30.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Пакеты, потоки и gRPC](#traffic-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-packet-capture-process-smoke-current-2026-10-30-json"></a>
+
+### `packet-capture-process-smoke-current-2026-10-30.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Пакеты, потоки и gRPC](#traffic-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-packet-panel-process-smoke-final-2026-10-30-json"></a>
+
+### `packet-panel-process-smoke-final-2026-10-30.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Пакеты, потоки и gRPC](#traffic-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-preview-fixed-images-2026-10-20-json"></a>
+
+### `preview-fixed-images-2026-10-20.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-preview-inactive-db-integrity-2026-10-20-json"></a>
+
+### `preview-inactive-db-integrity-2026-10-20.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-registration-smoke-2026-10-19-json"></a>
+
+### `registration-smoke-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-release-storage-backup-smoke-2026-10-19-json"></a>
+
+### `release-storage-backup-smoke-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-runtime-fixtures-smoke-2026-10-19-json"></a>
+
+### `runtime-fixtures-smoke-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-runtime-registration-smoke-2026-10-19-json"></a>
+
+### `runtime-registration-smoke-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-screenshots-sibir-bioguard-jpg"></a>
+
+### `screenshots/sibir-bioguard-*.jpg`
+
+Исторические локальные снимки браузерного сценария. Вложения не опубликованы; контекст: [реальные сервисы](../../../docs/real-services.md).
+
+<a id="report-security-acceptance-2026-10-20-json"></a>
+
+### `security-acceptance-2026-10-20.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-sibir-bank-manifest-diff-2026-10-19-json"></a>
+
+### `sibir-bank-manifest-diff-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-sibir-bank-web-cycle-2026-10-19-json"></a>
+
+### `sibir-bank-web-cycle-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-sibir-bioguard-manifest-diff-2026-10-19-json"></a>
+
+### `sibir-bioguard-manifest-diff-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-sibir-bioguard-web-cycle-2026-10-19-json"></a>
+
+### `sibir-bioguard-web-cycle-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-sibir-eyesee-web-cycle-2026-10-19-json"></a>
+
+### `sibir-eyesee-web-cycle-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-sibir-four-web-cycles-2026-10-19-json"></a>
+
+### `sibir-four-web-cycles-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-sibir-ncdex-web-cycle-2026-10-19-json"></a>
+
+### `sibir-ncdex-web-cycle-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-sibir-neli234-web-cycle-2026-10-19-json"></a>
+
+### `sibir-neli234-web-cycle-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-sqlite-wal-lock-safety-2026-10-20-json"></a>
+
+### `sqlite-wal-lock-safety-2026-10-20.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-storage-pressure-2026-10-19-json"></a>
+
+### `storage-pressure-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-traffic-development-2026-10-30-json"></a>
+
+### `traffic-development-2026-10-30.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Пакеты, потоки и gRPC](#traffic-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-unprepared-host-2026-10-20-json"></a>
+
+### `unprepared-host-2026-10-20.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-web-registration-browser-2026-10-19-json"></a>
+
+### `web-registration-browser-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+<a id="report-web-registration-git-smoke-2026-10-19-json"></a>
+
+### `web-registration-git-smoke-2026-10-19.json`
+
+Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).

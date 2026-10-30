@@ -1,0 +1,7 @@
+name: ctfm-real-bioguard
+services:
+  web:
+    container_name: !reset null
+    restart: "no"
+    ports: !override
+      - "127.0.0.1:27444:4444"

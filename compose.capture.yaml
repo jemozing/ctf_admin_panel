@@ -1,0 +1,219 @@
+{
+  "x-profile": {
+    "purpose": "Explicit opt-in Linux passive capture; run capture-bootstrap.py first.",
+    "resource_limits": "Prototype caps, not accepted throughput guarantees.",
+    "isolation": "Separate project; no Docker socket, executor core IPC, game files, or NET_ADMIN.",
+    "initial_capture": "Disabled; metadata-only unless Admin explicitly enables payload."
+  },
+  "name": "ctfm-packets",
+  "services": {
+    "packet-capture": {
+      "image": "ctfm-capture:local",
+      "build": {
+        "context": ".",
+        "dockerfile": "Dockerfile.capture",
+        "target": "capture"
+      },
+      "user": "0:0",
+      "command": [
+        "--policy-file=/etc/ctfm-capture/policy.json",
+        "--control-listen=127.0.0.1:9803",
+        "--control-unix=/run/ctfm-capture-control/capture.sock",
+        "--control-token-file=/run/secrets/control",
+        "--ingest-url=http://127.0.0.1:9804",
+        "--ingest-token-file=/run/secrets/ingest"
+      ],
+      "environment": {
+        "GOMAXPROCS": "2",
+        "GOMEMLIMIT": "192MiB"
+      },
+      "read_only": true,
+      "cap_drop": [
+        "ALL"
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "pids_limit": 64,
+      "mem_limit": "256m",
+      "cpus": 0.5,
+      "tmpfs": [
+        "/tmp:rw,noexec,nosuid,nodev,size=8m,mode=1777"
+      ],
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/policy",
+          "target": "/etc/ctfm-capture",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/capture-control",
+          "target": "/run/ctfm-capture-control",
+          "read_only": false,
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/secrets/capture-control",
+          "target": "/run/secrets/control",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/secrets/capture-ingest",
+          "target": "/run/secrets/ingest",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        }
+      ],
+      "restart": "unless-stopped",
+      "stop_grace_period": "15s",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "5m",
+          "max-file": "3"
+        }
+      },
+      "network_mode": "host",
+      "cap_add": [
+        "NET_RAW"
+      ],
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "/usr/local/bin/ctfm-capture",
+          "health",
+          "--url=http://127.0.0.1:9803/healthz"
+        ],
+        "interval": "10s",
+        "timeout": "3s",
+        "retries": 3
+      }
+    },
+    "packet-store": {
+      "image": "ctfm-packets:local",
+      "build": {
+        "context": ".",
+        "dockerfile": "Dockerfile.capture",
+        "target": "packets"
+      },
+      "user": "10005:10005",
+      "command": [
+        "--listen=0.0.0.0:9804",
+        "--control-unix=/run/ctfm-packets-control/packets.sock",
+        "--state=/var/lib/ctfm-packets",
+        "--ingest-token-file=/run/secrets/ingest",
+        "--read-token-file=/run/secrets/read",
+        "--quota-bytes=268435456",
+        "--per-service-bytes=67108864",
+        "--retention-seconds=3600",
+        "--max-records=100000",
+        "--minimum-free-bytes=1073741824"
+      ],
+      "environment": {
+        "GOMAXPROCS": "2",
+        "GOMEMLIMIT": "192MiB"
+      },
+      "read_only": true,
+      "cap_drop": [
+        "ALL"
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "pids_limit": 64,
+      "mem_limit": "256m",
+      "cpus": 0.5,
+      "tmpfs": [
+        "/tmp:rw,noexec,nosuid,nodev,size=8m,mode=1777"
+      ],
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/packets-state",
+          "target": "/var/lib/ctfm-packets",
+          "read_only": false,
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/packets-control",
+          "target": "/run/ctfm-packets-control",
+          "read_only": false,
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/secrets/packets-ingest",
+          "target": "/run/secrets/ingest",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/secrets/packets-read",
+          "target": "/run/secrets/read",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        }
+      ],
+      "restart": "unless-stopped",
+      "stop_grace_period": "15s",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "5m",
+          "max-file": "3"
+        }
+      },
+      "ports": [
+        {
+          "target": 9804,
+          "published": "9804",
+          "host_ip": "127.0.0.1",
+          "protocol": "tcp"
+        }
+      ],
+      "networks": [
+        "packets-private"
+      ],
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "/usr/local/bin/ctfm-packets",
+          "health",
+          "--url=http://127.0.0.1:9804/healthz"
+        ],
+        "interval": "10s",
+        "timeout": "3s",
+        "retries": 3
+      }
+    }
+  },
+  "networks": {
+    "packets-private": {
+      "internal": true
+    }
+  }
+}

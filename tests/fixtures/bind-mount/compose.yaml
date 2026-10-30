@@ -1,0 +1,31 @@
+name: ctfm-fixture-bind
+
+services:
+  app:
+    build: ./code
+    shm_size: 64m
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    user: "${CTFM_FIXTURE_UID:-1000}:${CTFM_FIXTURE_GID:-1000}"
+    volumes:
+      - type: bind
+        source: ${CTFM_FIXTURE_CODE_DIR:-./code}
+        target: /app
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CTFM_FIXTURE_DATA_DIR:-./data}
+        target: /data
+        bind:
+          create_host_path: false
+    ports:
+      - target: 8080
+        host_ip: 127.0.0.1
+        protocol: tcp
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]

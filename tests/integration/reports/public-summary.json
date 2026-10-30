@@ -1,0 +1,505 @@
+{
+  "schema_version": 1,
+  "prepared_on": "2026-10-30",
+  "kind": "redacted_documentation_summary",
+  "evidence_policy": {
+    "raw_reports_logs_and_screenshots": "retained_locally_not_published",
+    "summary_source": "Existing development and acceptance documentation; preparation did not rerun runtime tests."
+  },
+  "mvp_accepted": false,
+  "target_profile": {
+    "name": "competition-4g",
+    "os": "Linux",
+    "architecture": "amd64",
+    "vcpus": 4,
+    "ram_gib": 4,
+    "virtual_disk_gib": 40
+  },
+  "acceptance": {
+    "A01_A39": {
+      "confirmed_in_documented_limited_profiles": 19,
+      "partial": 20,
+      "target_release_accepted": false
+    },
+    "P01_P16": "target_acceptance_open",
+    "C01_C10": "target_acceptance_open",
+    "vm_testing": "deferred"
+  },
+  "groups": [
+    {
+      "id": "mvp-local",
+      "title": "Исторические MVP-проверки",
+      "status": "passed_with_scope_limits",
+      "period": "2026-10-19/2026-10-20",
+      "summary": "Синтетические Compose/workflow/fault/storage/backup сценарии и адаптированные браузерные циклы пяти SibirCTF выполнены в указанных в документации профилях. Это преимущественно Linux/arm64 OrbStack; отдельные amd64 запуски использовали эмуляцию.",
+      "limits": [
+        "Старые артефакты предшествуют части исправлений и новым модулям.",
+        "Пятиминутная нагрузка на общей VM не подтверждает competition-4g и часовой soak."
+      ]
+    },
+    {
+      "id": "native-linux",
+      "title": "Linux/amd64 VM",
+      "status": "incomplete_deferred",
+      "period": "2026-10-29",
+      "summary": "Подтверждены Compose, 13 workflow checks, backup/restore, native race/vet и четыре полных цикла BioGuard/ncdex/CyberBank/neuroLinks с сохранением данных.",
+      "limits": [
+        "Финальный итог EyeSee неизвестен после потери SSH.",
+        "Короткий load preflight не прошёл; повторились kernel stalls.",
+        "Пятиминутный benchmark, часовой soak и новая аварийная серия не завершены.",
+        "Текущая доступность VM и финальный возврат временного DNS не подтверждены."
+      ]
+    },
+    {
+      "id": "proxy-local",
+      "title": "HTTP Proxy, TLS и WAF",
+      "status": "implemented_local_checks_passed_target_acceptance_open",
+      "period": "2026-10-30",
+      "summary": "Локально проверены HTTP/TLS процессы, маршрутизация/трафик, rate limits и bans; реализованы групповой перенос/возврат портов и explicit HTTPS/2 termination.",
+      "limits": [
+        "Локальные unit/process проверки не заменяют реальный Compose cutover и checker.",
+        "P01–P16 и совместная вместимость 4 GiB на целевом хосте открыты."
+      ]
+    },
+    {
+      "id": "traffic-local",
+      "title": "Пакеты, потоки и gRPC",
+      "status": "implemented_local_checks_passed_target_acceptance_open",
+      "period": "2026-10-30",
+      "summary": "Разработка 10.0–10.4 завершена в bounded профилях: PCAP, TCP/UDP, HTTP2/gRPC/descriptors и интерфейс анализа. Финальные локальные API/process/browser проверки и Linux cross-build прошли.",
+      "limits": [
+        "Live AF_PACKET, реальные NAT/bridge/veth/checker и CPU/RAM/drop rate не приняты.",
+        "Этап 10.5/C10 и целевая Linux/Compose/CTF приёмка отложены.",
+        "Cross-build не является запуском на Linux."
+      ]
+    }
+  ],
+  "historical_artifacts": [
+    {
+      "artifact": "apply-efbig-linux-2026-10-20.json",
+      "anchor": "report-apply-efbig-linux-2026-10-20-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "compose-metrics-smoke-2026-10-19.json",
+      "anchor": "report-compose-metrics-smoke-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "compose-smoke-2026-10-19.json",
+      "anchor": "report-compose-smoke-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "compose-smoke-2026-10-20.json",
+      "anchor": "report-compose-smoke-2026-10-20-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "container-release-amd64-emulated-2026-10-19.json",
+      "anchor": "report-container-release-amd64-emulated-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "container-release-smoke-2026-10-19.json",
+      "anchor": "report-container-release-smoke-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "executor-peer-linux-2026-10-19.json",
+      "anchor": "report-executor-peer-linux-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "fault-multi-component-2026-10-20.json",
+      "anchor": "report-fault-multi-component-2026-10-20-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "fault-release-smoke-2026-10-19.json",
+      "anchor": "report-fault-release-smoke-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "fault-release-smoke-2026-10-20.json",
+      "anchor": "report-fault-release-smoke-2026-10-20-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "fixture-smoke-2026-10-19.json",
+      "anchor": "report-fixture-smoke-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "git-bundled-source-limits-2026-10-19.json",
+      "anchor": "report-git-bundled-source-limits-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "http-proxy-cutover-tls-2026-10-30.json",
+      "anchor": "report-http-proxy-cutover-tls-2026-10-30-json",
+      "group": "proxy-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "http-proxy-group-cutover-2026-10-30.json",
+      "anchor": "report-http-proxy-group-cutover-2026-10-30-json",
+      "group": "proxy-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "http-proxy-process-smoke-2026-10-30.json",
+      "anchor": "report-http-proxy-process-smoke-2026-10-30-json",
+      "group": "proxy-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "http-proxy-prototype-2026-10-30.json",
+      "anchor": "report-http-proxy-prototype-2026-10-30-json",
+      "group": "proxy-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "http-proxy-tls-process-smoke-2026-10-30.json",
+      "anchor": "report-http-proxy-tls-process-smoke-2026-10-30-json",
+      "group": "proxy-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "journal-enospc-2026-10-20.json",
+      "anchor": "report-journal-enospc-2026-10-20-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "linux-backup-maintenance-2026-10-19.json",
+      "anchor": "report-linux-backup-maintenance-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "linux-git-isolation-2026-10-19.json",
+      "anchor": "report-linux-git-isolation-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "linux-mount-boundary-regression-2026-10-19.json",
+      "anchor": "report-linux-mount-boundary-regression-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "mvp-acceptance-2026-10-20.json",
+      "anchor": "report-mvp-acceptance-2026-10-20-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "mvp-functionality-smoke-2026-10-19.json",
+      "anchor": "report-mvp-functionality-smoke-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "mvp-pipeline-negatives-smoke-2026-10-20.json",
+      "anchor": "report-mvp-pipeline-negatives-smoke-2026-10-20-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "mvp-workflows-smoke-2026-10-20.json",
+      "anchor": "report-mvp-workflows-smoke-2026-10-20-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-bioguard-data-postflight-2026-10-29.json",
+      "anchor": "report-native-bioguard-data-postflight-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-compose-smoke-2026-10-29.json",
+      "anchor": "report-native-compose-smoke-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-current-acceptance-2026-10-29.json",
+      "anchor": "report-native-current-acceptance-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-fetch-dns-diagnostic-2026-10-29.json",
+      "anchor": "report-native-fetch-dns-diagnostic-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-five-sibir-cycles-attempt1-2026-10-29.json",
+      "anchor": "report-native-five-sibir-cycles-attempt1-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-five-sibir-review-deployment-2026-10-29.json",
+      "anchor": "report-native-five-sibir-review-deployment-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-five-sibir-review-ready-2026-10-29.json",
+      "anchor": "report-native-five-sibir-review-ready-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-go-race-vet-2026-10-29.json",
+      "anchor": "report-native-go-race-vet-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-go-race-vet-attempt1-2026-10-29.json",
+      "anchor": "report-native-go-race-vet-attempt1-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-kernel-stalls-acceptance-2026-10-29.json",
+      "anchor": "report-native-kernel-stalls-acceptance-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-mvp-acceptance-2026-10-29.json",
+      "anchor": "report-native-mvp-acceptance-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-mvp-workflows-2026-10-29.json",
+      "anchor": "report-native-mvp-workflows-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-panel-load-preflight-attempt1-2026-10-29.json",
+      "anchor": "report-native-panel-load-preflight-attempt1-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-preacceptance-backup-2026-10-29.json",
+      "anchor": "report-native-preacceptance-backup-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-unprepared-host-2026-10-29.json",
+      "anchor": "report-native-unprepared-host-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-vbox-full-log-review-2026-10-29.json",
+      "anchor": "report-native-vbox-full-log-review-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-vm-inventory-2026-10-29.json",
+      "anchor": "report-native-vm-inventory-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "native-vm-kernel-stability-2026-10-29.json",
+      "anchor": "report-native-vm-kernel-stability-2026-10-29-json",
+      "group": "native-linux",
+      "raw_published": false
+    },
+    {
+      "artifact": "observation-load-2026-10-19.json",
+      "anchor": "report-observation-load-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "observation-load-2026-10-20.json",
+      "anchor": "report-observation-load-2026-10-20-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "packet-capture-local-2026-10-30.json",
+      "anchor": "report-packet-capture-local-2026-10-30-json",
+      "group": "traffic-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "packet-capture-process-smoke-current-2026-10-30.json",
+      "anchor": "report-packet-capture-process-smoke-current-2026-10-30-json",
+      "group": "traffic-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "packet-panel-process-smoke-final-2026-10-30.json",
+      "anchor": "report-packet-panel-process-smoke-final-2026-10-30-json",
+      "group": "traffic-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "preview-fixed-images-2026-10-20.json",
+      "anchor": "report-preview-fixed-images-2026-10-20-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "preview-inactive-db-integrity-2026-10-20.json",
+      "anchor": "report-preview-inactive-db-integrity-2026-10-20-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "registration-smoke-2026-10-19.json",
+      "anchor": "report-registration-smoke-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "release-storage-backup-smoke-2026-10-19.json",
+      "anchor": "report-release-storage-backup-smoke-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "runtime-fixtures-smoke-2026-10-19.json",
+      "anchor": "report-runtime-fixtures-smoke-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "runtime-registration-smoke-2026-10-19.json",
+      "anchor": "report-runtime-registration-smoke-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "screenshots/sibir-bioguard-*.jpg",
+      "anchor": "report-screenshots-sibir-bioguard-jpg",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "security-acceptance-2026-10-20.json",
+      "anchor": "report-security-acceptance-2026-10-20-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "sibir-bank-manifest-diff-2026-10-19.json",
+      "anchor": "report-sibir-bank-manifest-diff-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "sibir-bank-web-cycle-2026-10-19.json",
+      "anchor": "report-sibir-bank-web-cycle-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "sibir-bioguard-manifest-diff-2026-10-19.json",
+      "anchor": "report-sibir-bioguard-manifest-diff-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "sibir-bioguard-web-cycle-2026-10-19.json",
+      "anchor": "report-sibir-bioguard-web-cycle-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "sibir-eyesee-web-cycle-2026-10-19.json",
+      "anchor": "report-sibir-eyesee-web-cycle-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "sibir-four-web-cycles-2026-10-19.json",
+      "anchor": "report-sibir-four-web-cycles-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "sibir-ncdex-web-cycle-2026-10-19.json",
+      "anchor": "report-sibir-ncdex-web-cycle-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "sibir-neli234-web-cycle-2026-10-19.json",
+      "anchor": "report-sibir-neli234-web-cycle-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "sqlite-wal-lock-safety-2026-10-20.json",
+      "anchor": "report-sqlite-wal-lock-safety-2026-10-20-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "storage-pressure-2026-10-19.json",
+      "anchor": "report-storage-pressure-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "traffic-development-2026-10-30.json",
+      "anchor": "report-traffic-development-2026-10-30-json",
+      "group": "traffic-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "unprepared-host-2026-10-20.json",
+      "anchor": "report-unprepared-host-2026-10-20-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "web-registration-browser-2026-10-19.json",
+      "anchor": "report-web-registration-browser-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    },
+    {
+      "artifact": "web-registration-git-smoke-2026-10-19.json",
+      "anchor": "report-web-registration-git-smoke-2026-10-19-json",
+      "group": "mvp-local",
+      "raw_published": false
+    }
+  ],
+  "open_exit_checks": [
+    "Stable Linux/amd64 host and full five-service cycle including EyeSee final postflight.",
+    "Competition-4g load, five-minute benchmark and one-hour soak.",
+    "Daemon restart fault acceptance, registry unavailable to daemon, fsync I/O errors and power-loss boundaries.",
+    "Proxy/TLS/WAF and packet capture acceptance with real Compose, network paths and CTF checkers."
+  ]
+}

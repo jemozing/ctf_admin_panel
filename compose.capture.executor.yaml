@@ -1,0 +1,53 @@
+{
+  "services": {
+    "executor": {
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/policy",
+          "target": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/policy",
+          "read_only": false,
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/capture-control",
+          "target": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/capture-control",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/packets-control",
+          "target": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/packets-control",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/secrets/executor-control",
+          "target": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/secrets/executor-control",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/secrets/executor-read",
+          "target": "${CTFM_CAPTURE_ROOT:-/srv/ctfm-capture}/secrets/executor-read",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        }
+      ]
+    }
+  }
+}

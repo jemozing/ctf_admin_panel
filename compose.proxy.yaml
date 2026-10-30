@@ -1,0 +1,231 @@
+{
+  "x-profile": {
+    "purpose": "Explicit opt-in Linux HTTP data plane; run proxy-bootstrap.py first.",
+    "resource_limits": "Prototype caps, not accepted throughput guarantees.",
+    "isolation": "Separate project; no Docker socket, executor IPC or game filesystem mounts."
+  },
+  "name": "ctfm-traffic",
+  "services": {
+    "traffic-proxy": {
+      "image": "ctfm-traffic-proxy:local",
+      "build": {
+        "context": ".",
+        "dockerfile": "Dockerfile.proxy",
+        "target": "proxy"
+      },
+      "network_mode": "host",
+      "user": "10002:10002",
+      "command": [
+        "--policy-file=/etc/ctfm-proxy/policy.json",
+        "--state=/var/lib/ctfm-proxy",
+        "--control-listen=127.0.0.1:9801",
+        "--control-unix=/run/ctfm-proxy-control/proxy.sock",
+        "--control-token-file=/run/secrets/control",
+        "--recorder-url=http://127.0.0.1:9802",
+        "--recorder-token-file=/run/secrets/ingest",
+        "--tls-directory=/etc/ctfm-tls"
+      ],
+      "environment": {
+        "GOMAXPROCS": "2",
+        "GOMEMLIMIT": "192MiB"
+      },
+      "read_only": true,
+      "cap_drop": [
+        "ALL"
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "pids_limit": 128,
+      "mem_limit": "256m",
+      "cpus": 1,
+      "tmpfs": [
+        "/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777"
+      ],
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "${CTFM_PROXY_ROOT:-/srv/ctfm-proxy}/policy",
+          "target": "/etc/ctfm-proxy",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_PROXY_ROOT:-/srv/ctfm-proxy}/proxy-state",
+          "target": "/var/lib/ctfm-proxy",
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_PROXY_ROOT:-/srv/ctfm-proxy}/proxy-control",
+          "target": "/run/ctfm-proxy-control",
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_PROXY_ROOT:-/srv/ctfm-proxy}/secrets/proxy-control",
+          "target": "/run/secrets/control",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_PROXY_ROOT:-/srv/ctfm-proxy}/secrets/proxy-ingest",
+          "target": "/run/secrets/ingest",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_PROXY_ROOT:-/srv/ctfm-proxy}/tls",
+          "target": "/etc/ctfm-tls",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        }
+      ],
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "/usr/local/bin/ctfm-proxy",
+          "health",
+          "--url=http://127.0.0.1:9801/healthz"
+        ],
+        "interval": "10s",
+        "timeout": "3s",
+        "retries": 3
+      },
+      "restart": "unless-stopped",
+      "stop_grace_period": "15s",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "5m",
+          "max-file": "3"
+        }
+      }
+    },
+    "traffic-store": {
+      "image": "ctfm-traffic-store:local",
+      "build": {
+        "context": ".",
+        "dockerfile": "Dockerfile.proxy",
+        "target": "recorder"
+      },
+      "user": "10003:10003",
+      "command": [
+        "--listen=0.0.0.0:9802",
+        "--control-unix=/run/ctfm-traffic-control/recorder.sock",
+        "--state=/var/lib/ctfm-traffic",
+        "--ingest-token-file=/run/secrets/ingest",
+        "--read-token-file=/run/secrets/read",
+        "--quota-bytes=536870912",
+        "--per-service-bytes=134217728",
+        "--retention-seconds=3600",
+        "--max-records=100000",
+        "--minimum-free-bytes=1073741824"
+      ],
+      "environment": {
+        "GOMAXPROCS": "2",
+        "GOMEMLIMIT": "192MiB"
+      },
+      "ports": [
+        {
+          "target": 9802,
+          "published": "9802",
+          "host_ip": "127.0.0.1",
+          "protocol": "tcp"
+        }
+      ],
+      "networks": [
+        "recorder-private"
+      ],
+      "read_only": true,
+      "cap_drop": [
+        "ALL"
+      ],
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "pids_limit": 64,
+      "mem_limit": "256m",
+      "cpus": 0.5,
+      "tmpfs": [
+        "/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777"
+      ],
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "${CTFM_PROXY_ROOT:-/srv/ctfm-proxy}/traffic-state",
+          "target": "/var/lib/ctfm-traffic",
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_PROXY_ROOT:-/srv/ctfm-proxy}/traffic-control",
+          "target": "/run/ctfm-traffic-control",
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_PROXY_ROOT:-/srv/ctfm-proxy}/secrets/recorder-ingest",
+          "target": "/run/secrets/ingest",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        },
+        {
+          "type": "bind",
+          "source": "${CTFM_PROXY_ROOT:-/srv/ctfm-proxy}/secrets/recorder-read",
+          "target": "/run/secrets/read",
+          "read_only": true,
+          "bind": {
+            "create_host_path": false
+          }
+        }
+      ],
+      "healthcheck": {
+        "test": [
+          "CMD",
+          "/usr/local/bin/ctfm-traffic",
+          "health",
+          "--url=http://127.0.0.1:9802/healthz"
+        ],
+        "interval": "10s",
+        "timeout": "3s",
+        "retries": 3
+      },
+      "restart": "unless-stopped",
+      "stop_grace_period": "15s",
+      "logging": {
+        "driver": "json-file",
+        "options": {
+          "max-size": "5m",
+          "max-file": "3"
+        }
+      }
+    }
+  },
+  "networks": {
+    "recorder-private": {
+      "internal": true
+    }
+  }
+}

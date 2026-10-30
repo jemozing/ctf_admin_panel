@@ -1,0 +1,15 @@
+# Synthetic local credentials; this override does not change upstream data mounts.
+name: ctfm-real-bank
+services:
+  cyber-bank-postgres:
+    restart: "no"
+    ports: !override
+      - "127.0.0.1:27338:5432"
+  cyber-bank-api:
+    restart: "no"
+    env_file: !override
+      - "${CTFM_REAL_BANK_ENV:?Use scripts/fetch-real-services.py config}"
+  cyber-bank-front:
+    restart: "no"
+    ports: !override
+      - "127.0.0.1:27337:1337"

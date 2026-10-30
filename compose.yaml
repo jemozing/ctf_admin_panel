@@ -1,0 +1,112 @@
+name: ctf-manager
+
+services:
+  dashboard:
+    image: ctf-manager-dashboard:local
+    build:
+      context: .
+      target: dashboard
+    user: "10001:10001"
+    command:
+      - dashboard
+      - --listen
+      - 0.0.0.0:8765
+      - --state
+      - /var/lib/ctf-manager
+      - --socket
+      - /run/ctf-manager/executor.sock
+      - --allowed-hosts
+      - ${CTFM_ALLOWED_HOSTS:-localhost:8765,127.0.0.1:8765}
+      - --secure-cookies=${CTFM_SECURE_COOKIES:-false}
+    ports:
+      - target: 8765
+        published: ${CTFM_PORT:-8765}
+        host_ip: ${CTFM_BIND_ADDRESS:-127.0.0.1}
+        protocol: tcp
+    volumes:
+      - type: bind
+        source: ${CTFM_ROOT:-/srv/ctf-manager}/dashboard
+        target: /var/lib/ctf-manager
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CTFM_ROOT:-/srv/ctf-manager}/runtime
+        target: /run/ctf-manager
+        read_only: true
+        bind:
+          create_host_path: false
+    depends_on:
+      executor:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777
+    healthcheck:
+      test: [CMD, /bin/busybox, wget, -q, --spider, http://127.0.0.1:8765/healthz]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 20s
+    mem_limit: 256m
+    pids_limit: 128
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  executor:
+    image: ctf-manager-executor:local
+    build:
+      context: .
+      target: executor
+    user: "0:10001"
+    command: [--config, /etc/ctf-manager/executor.json, executor]
+    environment:
+      DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKER_CONFIG: /tmp/docker
+    volumes:
+      - type: bind
+        source: ${CTFM_ROOT:-/srv/ctf-manager}/config
+        target: /etc/ctf-manager
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CTFM_ROOT:-/srv/ctf-manager}/executor
+        target: ${CTFM_ROOT:-/srv/ctf-manager}/executor
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CTFM_ROOT:-/srv/ctf-manager}/runtime
+        target: /run/ctf-manager
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${CTFM_DOCKER_SOCKET:-/var/run/docker.sock}
+        target: /var/run/docker.sock
+        bind:
+          create_host_path: false
+    # Approved service/workspace roots are added by compose-bootstrap.py.
+    # Never mount /, the Docker socket or executor state into dashboard.
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, KILL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=128m,mode=1777
+    healthcheck:
+      test: [CMD, /usr/local/bin/ctf-manager, --config, /etc/ctf-manager/executor.json, status]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+    stop_grace_period: 60s
+    mem_limit: 384m
+    pids_limit: 256
+    logging: *logging

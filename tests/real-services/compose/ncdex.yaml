@@ -1,0 +1,11 @@
+# Preserve the upstream database configuration mismatch as a negative fixture.
+name: ctfm-real-ncdex
+services:
+  app:
+    restart: "no"
+    ports: !override
+      - "127.0.0.1:27331:7331"
+  db:
+    restart: "no"
+    ports: !override
+      - "127.0.0.1:27432:8432"

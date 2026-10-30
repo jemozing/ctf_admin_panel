@@ -1,0 +1,11 @@
+{
+  "state_directory": "/srv/ctf-manager/executor",
+  "socket": "/run/ctf-manager/executor.sock",
+  "docker_host": "unix:///var/run/docker.sock",
+  "docker_binary": "/usr/local/bin/docker",
+  "compose_binary": "/usr/local/libexec/docker/cli-plugins/docker-compose",
+  "discovery_roots": ["/srv/ctf-manager/services"],
+  "workspace_roots": ["/srv/ctf-manager/workspaces"],
+  "web_uid": 10001,
+  "development": false
+}

@@ -1,0 +1,11 @@
+# Additional file after the pinned upstream Compose file; requires Compose >= 2.24.4.
+name: ctfm-real-eyesee
+services:
+  eyesee-storage:
+    restart: "no"
+    ports: !override []
+  eyesee-service:
+    platform: linux/amd64
+    restart: "no"
+    ports: !override
+      - "127.0.0.1:27910:25910"

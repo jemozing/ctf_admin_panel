@@ -1,0 +1,328 @@
+{
+  "schema_version": 1,
+  "status": "stage_0_static_review_not_registration_approval",
+  "linux_vendor_root": "/srv/ctfm/real-services/tests/fixtures/vendor",
+  "maps": [
+    {
+      "id": "eyesee",
+      "source_root": "2025-cybersibir-service-eyesee/vuln-service",
+      "compose_file": "docker-compose.yaml",
+      "components": [
+        {
+          "name": "eyesee-service",
+          "role": "application",
+          "platform": "linux/amd64",
+          "api": "grpc:25910",
+          "read_only_rootfs": true
+        },
+        {
+          "name": "eyesee-storage",
+          "role": "data",
+          "api": "s3:9000; console:9001 internal",
+          "read_only_rootfs": false
+        }
+      ],
+      "managed_paths": [
+        "Dockerfile",
+        "eyesee"
+      ],
+      "configuration_paths": [
+        "docker-compose.yaml"
+      ],
+      "data_paths": [
+        {
+          "component": "eyesee-storage",
+          "target": "/data",
+          "storage": "not_explicit_in_compose; inspect_image_and_container_required",
+          "policy": "preserve_external_to_releases"
+        }
+      ],
+      "candidate_targets": [
+        "eyesee-service"
+      ],
+      "never_implicit_recreate": [
+        "eyesee-storage"
+      ],
+      "registration_mode": "inventory_only_until_data_confirmed",
+      "recreate_blockers": [
+        "Unconfirmed MinIO data storage identity",
+        "Opaque amd64 application requires compatible Linux runtime"
+      ]
+    },
+    {
+      "id": "bank",
+      "source_root": "2025-cybersibir-service-bank/vuln-service",
+      "compose_file": "docker-compose.yaml",
+      "components": [
+        {
+          "name": "cyber-bank-api",
+          "role": "application",
+          "api": "http+websocket:37773 internal"
+        },
+        {
+          "name": "cyber-bank-front",
+          "role": "frontend",
+          "api": "http:1337"
+        },
+        {
+          "name": "cyber-bank-postgres",
+          "role": "data",
+          "api": "postgres:5432"
+        }
+      ],
+      "managed_paths": [
+        "cyberBank/Dockerfile",
+        "cyberBank/package.json",
+        "cyberBank/package-lock.json",
+        "cyberBank/run.sh",
+        "cyberBank/tsconfig.json",
+        "cyberBank/src",
+        "front/Dockerfile",
+        "front/package.json",
+        "front/package-lock.json",
+        "front/run.sh",
+        "front/.nginx",
+        "front/src",
+        "front/public"
+      ],
+      "configuration_paths": [
+        "docker-compose.yaml"
+      ],
+      "secret_paths": [
+        ".env"
+      ],
+      "mounts": [
+        {
+          "component": "cyber-bank-api",
+          "type": "bind",
+          "source": "cyberBank",
+          "target": "/app",
+          "read_only": false
+        },
+        {
+          "component": "cyber-bank-api",
+          "type": "anonymous_volume",
+          "target": "/app/node_modules",
+          "role": "dependency_cache; retain_identity"
+        },
+        {
+          "component": "cyber-bank-api",
+          "type": "anonymous_volume",
+          "target": "/app/build",
+          "role": "mixed_build_and_game_data; retain_identity"
+        },
+        {
+          "component": "cyber-bank-front",
+          "type": "bind",
+          "source": "front/src",
+          "target": "/app/src",
+          "read_only": false
+        },
+        {
+          "component": "cyber-bank-front",
+          "type": "bind",
+          "source": "front/public",
+          "target": "/app/public",
+          "read_only": false
+        },
+        {
+          "component": "cyber-bank-front",
+          "type": "bind",
+          "source": "front/package.json",
+          "target": "/app/package.json",
+          "read_only": false
+        },
+        {
+          "component": "cyber-bank-front",
+          "type": "bind",
+          "source": "front/package-lock.json",
+          "target": "/app/package-lock.json",
+          "read_only": false
+        }
+      ],
+      "data_paths": [
+        {
+          "component": "cyber-bank-postgres",
+          "target": "/var/lib/postgresql/data",
+          "storage": "named_volume:postgres; inspect_effective_PGDATA_required_for_unversioned_image",
+          "policy": "preserve"
+        },
+        {
+          "component": "cyber-bank-api",
+          "target": "/app/build/static/images",
+          "storage": "anonymous_volume:/app/build",
+          "policy": "preserve; never_snapshot_as_code"
+        }
+      ],
+      "candidate_targets": [
+        "cyber-bank-api",
+        "cyber-bank-front"
+      ],
+      "never_implicit_recreate": [
+        "cyber-bank-postgres"
+      ],
+      "registration_mode": "inventory_only_until_mixed_data_and_migrations_confirmed",
+      "recreate_blockers": [
+        "Mixed code bind and anonymous build/game-data volume",
+        "Startup script runs schema migrations",
+        "Unversioned postgres image requires immutable image ID and effective PGDATA verification",
+        "Bind-mounted application requires explicit file-tree switch"
+      ]
+    },
+    {
+      "id": "ncdex",
+      "source_root": "2025-cybersibir-service-ncdex/vuln-service",
+      "compose_file": "docker-compose.yml",
+      "components": [
+        {
+          "name": "app",
+          "role": "application",
+          "api": "http:7331",
+          "user": "appuser"
+        },
+        {
+          "name": "db",
+          "role": "data",
+          "api": "postgres:8432"
+        }
+      ],
+      "managed_paths": [
+        "Dockerfile",
+        "shard.yml",
+        "shard.lock",
+        "src",
+        "public"
+      ],
+      "configuration_paths": [
+        "docker-compose.yml",
+        "config/config.yml"
+      ],
+      "mounts": [
+        {
+          "component": "db",
+          "type": "bind",
+          "source": "src/db/migrations",
+          "target": "/docker-entrypoint-initdb.d",
+          "read_only": false,
+          "role": "database_initialization; active_mount"
+        }
+      ],
+      "data_paths": [
+        {
+          "component": "db",
+          "target": "/var/lib/postgresql/data",
+          "storage": "not_explicit_in_compose; inspect_image_declared_anonymous_volume_required",
+          "policy": "preserve_volume_identity"
+        }
+      ],
+      "candidate_targets": [
+        "app"
+      ],
+      "never_implicit_recreate": [
+        "db"
+      ],
+      "registration_mode": "inventory_only_until_runtime_configuration_fixed_and_data_confirmed",
+      "recreate_blockers": [
+        "Database DSN localhost:7432 conflicts with db:8432 Compose network",
+        "Unconfirmed PostgreSQL runtime storage identity",
+        "src/db/migrations is both source tree and live DB init bind; exclude from ordinary file switch"
+      ]
+    },
+    {
+      "id": "bioguard",
+      "source_root": "2025-cybersibir-service-BioGuard/vuln-service",
+      "compose_file": "docker-compose.yml",
+      "components": [
+        {
+          "name": "web",
+          "role": "application_and_data",
+          "api": "http:4444"
+        }
+      ],
+      "managed_paths": [
+        "Dockerfile",
+        "requirements.txt",
+        "manage.py",
+        "BioGuard",
+        "accounts",
+        "health_corp"
+      ],
+      "configuration_paths": [
+        "docker-compose.yml",
+        "health_corp/settings.py"
+      ],
+      "data_paths": [
+        {
+          "component": "web",
+          "target": "/app/db.sqlite3",
+          "storage": "container_writable_layer",
+          "policy": "block_recreation_until_externalized"
+        }
+      ],
+      "candidate_targets": [
+        "web"
+      ],
+      "registration_mode": "inventory_only",
+      "recreate_blockers": [
+        "SQLite is stored in writable container layer",
+        "Dockerfile runs makemigrations and migrate at build time",
+        "Source Dockerfile copies entire build directory; data exclusion must be explicit"
+      ]
+    },
+    {
+      "id": "neli234",
+      "source_root": "2025-cybersibir-service-neLi234/vuln-service",
+      "compose_file": "docker-compose.yaml",
+      "components": [
+        {
+          "name": "controller",
+          "role": "application_and_data",
+          "platform": "linux/amd64",
+          "api": "custom_text_tcp:2340"
+        },
+        {
+          "name": "neurolink",
+          "role": "opaque_internal_application",
+          "platform": "linux/amd64",
+          "api": "custom_binary_tcp:8080 internal"
+        }
+      ],
+      "managed_paths": [
+        "controller/Dockerfile",
+        "controller/Makefile",
+        "controller/include",
+        "controller/src",
+        "controller/sqlite",
+        "neurolink/Dockerfile",
+        "neurolink/neurolink"
+      ],
+      "configuration_paths": [
+        "docker-compose.yaml"
+      ],
+      "data_paths": [
+        {
+          "component": "controller",
+          "target": "/app/messages.db",
+          "storage": "container_writable_layer",
+          "policy": "block_recreation_until_externalized"
+        },
+        {
+          "component": "neurolink",
+          "target": "unknown_until_runtime_audit",
+          "storage": "not_documented_in_compose_or_source",
+          "policy": "block_recreation_until_classified"
+        }
+      ],
+      "candidate_targets": [
+        "controller",
+        "neurolink"
+      ],
+      "registration_mode": "inventory_only",
+      "recreate_blockers": [
+        "SQLite messages.db is stored in controller writable layer",
+        "Opaque amd64 neurolink binary has unclassified persistent state",
+        "Floating gcc/ubuntu/golang build images"
+      ]
+    }
+  ]
+}

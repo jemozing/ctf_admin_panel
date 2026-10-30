@@ -1,0 +1,58 @@
+name: Ошибка
+description: Сообщить о воспроизводимой ошибке приложения.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Опишите ошибку и способ её повторить. Для сообщений об уязвимостях следуйте SECURITY.md.
+        Перед публикацией удалите пароли, токены, cookie, флаги CTF и персональные данные из текста и вложений.
+
+  - type: input
+    id: version
+    attributes:
+      label: Версия или commit
+      description: Укажите версию приложения или хеш commit, на котором возникла ошибка.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Окружение
+      description: ОС и архитектура хоста, версии Docker и Docker Compose, браузер, включённые компоненты приложения.
+      placeholder: "Ubuntu 24.04 / amd64; Docker …; Compose …; dashboard + executor + proxy"
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Шаги воспроизведения
+      description: По возможности используйте минимальный сервис или синтетическую фикстуру.
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ожидаемый результат
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Фактический результат
+      description: Добавьте текст ошибки и идентификатор операции, если он есть.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Диагностика
+      description: Очищенные от секретов фрагменты логов, конфигурации или скриншоты. Полные дампы трафика и рабочие базы данных не требуются.

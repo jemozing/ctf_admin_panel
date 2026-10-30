@@ -1,0 +1,240 @@
+{
+  "fixtures": [
+    {
+      "id": "eyesee",
+      "project": "ctfm-real-eyesee",
+      "status": "config_passed",
+      "runtime": "not_run",
+      "components": [
+        {
+          "name": "eyesee-service",
+          "image": null,
+          "build": true,
+          "platform": "linux/amd64",
+          "ports": [
+            {
+              "mode": "ingress",
+              "host_ip": "127.0.0.1",
+              "target": 25910,
+              "published": "27910",
+              "protocol": "tcp"
+            }
+          ],
+          "mounts": [],
+          "read_only": true
+        },
+        {
+          "name": "eyesee-storage",
+          "image": "quay.io/minio/minio:RELEASE.2025-02-28T09-55-16Z",
+          "build": false,
+          "platform": null,
+          "ports": [],
+          "mounts": [],
+          "read_only": false
+        }
+      ]
+    },
+    {
+      "id": "bank",
+      "project": "ctfm-real-bank",
+      "status": "config_passed",
+      "runtime": "not_run",
+      "components": [
+        {
+          "name": "cyber-bank-api",
+          "image": null,
+          "build": true,
+          "platform": null,
+          "ports": [],
+          "mounts": [
+            {
+              "type": "bind",
+              "source": "${VENDOR_ROOT}/2025-cybersibir-service-bank/vuln-service/cyberBank",
+              "target": "/app"
+            },
+            {
+              "type": "volume",
+              "target": "/app/node_modules"
+            },
+            {
+              "type": "volume",
+              "target": "/app/build"
+            }
+          ],
+          "read_only": false
+        },
+        {
+          "name": "cyber-bank-front",
+          "image": null,
+          "build": true,
+          "platform": null,
+          "ports": [
+            {
+              "mode": "ingress",
+              "host_ip": "127.0.0.1",
+              "target": 1337,
+              "published": "27337",
+              "protocol": "tcp"
+            }
+          ],
+          "mounts": [
+            {
+              "type": "bind",
+              "source": "${VENDOR_ROOT}/2025-cybersibir-service-bank/vuln-service/front/src",
+              "target": "/app/src"
+            },
+            {
+              "type": "bind",
+              "source": "${VENDOR_ROOT}/2025-cybersibir-service-bank/vuln-service/front/public",
+              "target": "/app/public"
+            },
+            {
+              "type": "bind",
+              "source": "${VENDOR_ROOT}/2025-cybersibir-service-bank/vuln-service/front/package.json",
+              "target": "/app/package.json"
+            },
+            {
+              "type": "bind",
+              "source": "${VENDOR_ROOT}/2025-cybersibir-service-bank/vuln-service/front/package-lock.json",
+              "target": "/app/package-lock.json"
+            }
+          ],
+          "read_only": false
+        },
+        {
+          "name": "cyber-bank-postgres",
+          "image": "postgres",
+          "build": false,
+          "platform": null,
+          "ports": [
+            {
+              "mode": "ingress",
+              "host_ip": "127.0.0.1",
+              "target": 5432,
+              "published": "27338",
+              "protocol": "tcp"
+            }
+          ],
+          "mounts": [
+            {
+              "type": "volume",
+              "source": "postgres",
+              "target": "/var/lib/postgresql/data"
+            }
+          ],
+          "read_only": false
+        }
+      ]
+    },
+    {
+      "id": "ncdex",
+      "project": "ctfm-real-ncdex",
+      "status": "config_passed",
+      "runtime": "not_run",
+      "components": [
+        {
+          "name": "app",
+          "image": null,
+          "build": true,
+          "platform": null,
+          "ports": [
+            {
+              "mode": "ingress",
+              "host_ip": "127.0.0.1",
+              "target": 7331,
+              "published": "27331",
+              "protocol": "tcp"
+            }
+          ],
+          "mounts": [],
+          "read_only": false
+        },
+        {
+          "name": "db",
+          "image": "postgres:17.4-alpine",
+          "build": false,
+          "platform": null,
+          "ports": [
+            {
+              "mode": "ingress",
+              "host_ip": "127.0.0.1",
+              "target": 8432,
+              "published": "27432",
+              "protocol": "tcp"
+            }
+          ],
+          "mounts": [
+            {
+              "type": "bind",
+              "source": "${VENDOR_ROOT}/2025-cybersibir-service-ncdex/vuln-service/src/db/migrations",
+              "target": "/docker-entrypoint-initdb.d"
+            }
+          ],
+          "read_only": false
+        }
+      ]
+    },
+    {
+      "id": "bioguard",
+      "project": "ctfm-real-bioguard",
+      "status": "config_passed",
+      "runtime": "not_run",
+      "components": [
+        {
+          "name": "web",
+          "image": null,
+          "build": true,
+          "platform": null,
+          "ports": [
+            {
+              "mode": "ingress",
+              "host_ip": "127.0.0.1",
+              "target": 4444,
+              "published": "27444",
+              "protocol": "tcp"
+            }
+          ],
+          "mounts": [],
+          "read_only": false
+        }
+      ]
+    },
+    {
+      "id": "neli234",
+      "project": "ctfm-real-neli234",
+      "status": "config_passed",
+      "runtime": "not_run",
+      "components": [
+        {
+          "name": "controller",
+          "image": null,
+          "build": true,
+          "platform": "linux/amd64",
+          "ports": [
+            {
+              "mode": "ingress",
+              "host_ip": "127.0.0.1",
+              "target": 2340,
+              "published": "27340",
+              "protocol": "tcp"
+            }
+          ],
+          "mounts": [],
+          "read_only": false
+        },
+        {
+          "name": "neurolink",
+          "image": null,
+          "build": true,
+          "platform": "linux/amd64",
+          "ports": [],
+          "mounts": [],
+          "read_only": false
+        }
+      ]
+    }
+  ],
+  "validated_at": "2026-10-19",
+  "tool": "Docker Compose v5.5.0",
+  "scope": "config and static policy only; no daemon/image/container runtime inspection"
+}

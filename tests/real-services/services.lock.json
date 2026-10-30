@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "organization": "https://github.com/SibirCTF",
+  "reviewed_at": "2026-10-19",
+  "purpose": "Local integration fixtures; original game data layout is preserved.",
+  "services": [
+    {
+      "id": "eyesee",
+      "title": "EyeSee",
+      "repository": "https://github.com/SibirCTF/2025-cybersibir-service-eyesee.git",
+      "commit": "2eda1b05fe6e025c3f1bec25f762f3ad01d6a74c",
+      "vendor_directory": "2025-cybersibir-service-eyesee",
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "sha256": "3afbcea80a3087927f725f535c242463368e7999af509e07acd5180208da6c93"
+      },
+      "upstream_compose": "vuln-service/docker-compose.yaml",
+      "override": "compose/eyesee.yaml",
+      "project_name": "ctfm-real-eyesee",
+      "reviewed_files_sha256": {
+        "LICENSE": "3afbcea80a3087927f725f535c242463368e7999af509e07acd5180208da6c93",
+        "vuln-service/docker-compose.yaml": "023ab7af7b6c04cb85e53630fb67099a9d0416b757634e3aa3e286c85e819693",
+        "vuln-service/Dockerfile": "0cabbc0b99c06ad11a83b2cd52b897f295c92df38bc141f8cacef4083cad699f",
+        "vuln-service/../protocols/service.proto": "317e30e5241bc46d493bd2312c9fd0738e23781fb359b47b0348e2d501947705",
+        "vuln-service/../dev/service/main.go": "8615d9f0a321cd2775ab6356c4e338969106c0ab04c35bedfae316101c88793b",
+        "vuln-service/eyesee": "833bddb5d5aa0fb4227ca0403f611d57cb109301439ff3190f00063cfe86e378"
+      },
+      "linux_source_template": "/srv/ctfm/real-services/tests/fixtures/vendor/2025-cybersibir-service-eyesee/vuln-service",
+      "runtime_validation": "not_run"
+    },
+    {
+      "id": "bank",
+      "title": "CyberBank",
+      "repository": "https://github.com/SibirCTF/2025-cybersibir-service-bank.git",
+      "commit": "4a7d4eafb2e8030aa230316e3f191908a2b0437a",
+      "vendor_directory": "2025-cybersibir-service-bank",
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "sha256": "8f45a90d6c4730e8529639eaf01d621b74e192a7ea9f3d692407a3fb6e5c990e"
+      },
+      "upstream_compose": "vuln-service/docker-compose.yaml",
+      "override": "compose/bank.yaml",
+      "project_name": "ctfm-real-bank",
+      "reviewed_files_sha256": {
+        "LICENSE": "8f45a90d6c4730e8529639eaf01d621b74e192a7ea9f3d692407a3fb6e5c990e",
+        "vuln-service/docker-compose.yaml": "5b78909ad9ca3013ae47580fd5c1c1bb8910d320b7ec5bfdc0cd81cf6313e7ba",
+        "vuln-service/cyberBank/Dockerfile": "0c3a510a75b5d1c9ffdacad5f651ca43aefa66f220fd09dbbd9000d8eeaa49f3",
+        "vuln-service/front/Dockerfile": "62a3595f1ed4468ce47049dd4a02941acffaf1b6779da7a0d52c2f72a501801d",
+        "vuln-service/cyberBank/src/db/db.ts": "3c640035ea9f78d27e64784da07c0b1aa451cc0c6691930be923865846502a74",
+        "vuln-service/cyberBank/run.sh": "2126f2777c10bd5e3adb501be5a0315fc500b0a910e61c3ea5f38f40e39a91e5",
+        "vuln-service/cyberBank/src/imageGen.ts": "5c0b6bf09a8318343738dface62bc4dc1521e497b79f96bb8d046121e93b53ed",
+        "vuln-service/cyberBank/src/index.ts": "03203b667cc5552a3a1d91f9f3ac33b11c4621a8465a727284faa14539e2bb7c",
+        "vuln-service/front/.nginx/nginx.conf": "bd96ec00cd85c3837e439439bf9ffd0f615aef14ce1db7e4972bfedc90dc4697"
+      },
+      "linux_source_template": "/srv/ctfm/real-services/tests/fixtures/vendor/2025-cybersibir-service-bank/vuln-service",
+      "runtime_validation": "not_run",
+      "environment_file": "bank.env"
+    },
+    {
+      "id": "ncdex",
+      "title": "NightCity Data Exchange",
+      "repository": "https://github.com/SibirCTF/2025-cybersibir-service-ncdex.git",
+      "commit": "435b7108d3b8c2693467a9e4be8a5c71b0936d64",
+      "vendor_directory": "2025-cybersibir-service-ncdex",
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "sha256": "8f45a90d6c4730e8529639eaf01d621b74e192a7ea9f3d692407a3fb6e5c990e"
+      },
+      "upstream_compose": "vuln-service/docker-compose.yml",
+      "override": "compose/ncdex.yaml",
+      "project_name": "ctfm-real-ncdex",
+      "reviewed_files_sha256": {
+        "LICENSE": "8f45a90d6c4730e8529639eaf01d621b74e192a7ea9f3d692407a3fb6e5c990e",
+        "vuln-service/docker-compose.yml": "15a7e14039e434c9829b202ca722edb111f4a8eb8df1f4568a1fa9be03bb3dd5",
+        "vuln-service/Dockerfile": "a857a9cacd1eaa2906bb58171ef83da58d476830dacfed342814d49e8506b3df",
+        "vuln-service/config/config.yml": "6a0611d190a8346ee5c1298751ce92bf328cb68c2fd75c44ecbd8f3c1b3b920b",
+        "vuln-service/src/app.cr": "9864d4e7795d4d992b815ce4dc59d9b2afaab1bcaaa1cc71b217144a65abc426",
+        "vuln-service/src/helpers/dbconnect.cr": "f3af892e2e8baa953b774ab1045be39c32695808886b3922fd1426969e70c965",
+        "vuln-service/src/routes.cr": "63f3dc43b95a487ee6e791af033c22a3829d3c3e829246858ee353daa08720f7"
+      },
+      "linux_source_template": "/srv/ctfm/real-services/tests/fixtures/vendor/2025-cybersibir-service-ncdex/vuln-service",
+      "runtime_validation": "not_run"
+    },
+    {
+      "id": "bioguard",
+      "title": "BioGuard",
+      "repository": "https://github.com/SibirCTF/2025-cybersibir-service-BioGuard.git",
+      "commit": "0d5dffae3460823715a266d5674d2110837c4bea",
+      "vendor_directory": "2025-cybersibir-service-BioGuard",
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "sha256": "8f45a90d6c4730e8529639eaf01d621b74e192a7ea9f3d692407a3fb6e5c990e"
+      },
+      "upstream_compose": "vuln-service/docker-compose.yml",
+      "override": "compose/bioguard.yaml",
+      "project_name": "ctfm-real-bioguard",
+      "reviewed_files_sha256": {
+        "LICENSE": "8f45a90d6c4730e8529639eaf01d621b74e192a7ea9f3d692407a3fb6e5c990e",
+        "vuln-service/docker-compose.yml": "365016d233925368ca725b571bfc782e807b9c748c2be2111f03c8e225ec08c0",
+        "vuln-service/Dockerfile": "cdf8bc3d008ae9e661283b159df064943797aa1633574d95803f06a6aede381c",
+        "vuln-service/health_corp/settings.py": "ee6be8197f6859c98805e24e3d379a35a15de3a6577bcb06368706b31c6d80a6",
+        "vuln-service/BioGuard/urls.py": "2a8fb79727287b3a31b6076aaffb7b01dbd639e5f2f20267c0c9e3728ada8a03",
+        "vuln-service/BioGuard/models.py": "cc56205941a4a8546b57127e9222623a04bee9a61e47c2fa894043fd712ce2f5",
+        "vuln-service/BioGuard/views.py": "b265d8e96616f6c8f0c8dd6b3c1793075de9d4a2f5b423dcd25ab37b791901c7"
+      },
+      "linux_source_template": "/srv/ctfm/real-services/tests/fixtures/vendor/2025-cybersibir-service-BioGuard/vuln-service",
+      "runtime_validation": "not_run"
+    },
+    {
+      "id": "neli234",
+      "title": "neuroLinks 2-3-4",
+      "repository": "https://github.com/SibirCTF/2025-cybersibir-service-neLi234.git",
+      "commit": "28d8a11498675233e87394e4d89956ad0938abfd",
+      "vendor_directory": "2025-cybersibir-service-neLi234",
+      "license": {
+        "spdx": "MIT",
+        "file": "LICENSE",
+        "sha256": "8f45a90d6c4730e8529639eaf01d621b74e192a7ea9f3d692407a3fb6e5c990e"
+      },
+      "upstream_compose": "vuln-service/docker-compose.yaml",
+      "override": "compose/neli234.yaml",
+      "project_name": "ctfm-real-neli234",
+      "reviewed_files_sha256": {
+        "LICENSE": "8f45a90d6c4730e8529639eaf01d621b74e192a7ea9f3d692407a3fb6e5c990e",
+        "vuln-service/docker-compose.yaml": "516409557ef0dc5cd4c66abdc239dfc066596d441993aa9d75c3fb26401ed7e3",
+        "vuln-service/controller/Dockerfile": "f89fbff10f52eec4dd99ab046458b92da8ece7b4e02441ae483fb39212266f59",
+        "vuln-service/neurolink/Dockerfile": "7974780f0182140571ec2477a045604275fa6ee067957e26de0367a6dbe9fc5a",
+        "vuln-service/controller/src/database_handler.cpp": "e225ba82bac41db51989f0b2876bf8569dc532f86f4c2078fb5d49a25dfc0560",
+        "vuln-service/controller/src/server.cpp": "957eae0dcfbeeea6410ac4e5e97ed9b8e409b5667260a3df13f16ca3f32d4d62",
+        "vuln-service/neurolink/neurolink": "f84c29a11730761092e0ba65dd1f9fe1586ad5af9d25e36004c653287b2ff013",
+        "vuln-service/controller/src/main.cpp": "c18788d2a003dac35eff94068bdd9c45743c5170f3c9b4079c6e0f53a52bdc0e"
+      },
+      "linux_source_template": "/srv/ctfm/real-services/tests/fixtures/vendor/2025-cybersibir-service-neLi234/vuln-service",
+      "runtime_validation": "not_run"
+    }
+  ]
+}

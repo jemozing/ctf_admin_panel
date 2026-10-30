@@ -1,0 +1,42 @@
+name: ctfm-fixture-named
+
+services:
+  app:
+    build: ./code
+    shm_size: 64m
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    environment:
+      FIXTURE_STORAGE: remote
+      FIXTURE_BACKEND_URL: http://database:8080
+    depends_on:
+      database:
+        condition: service_healthy
+    ports:
+      - target: 8080
+        host_ip: 127.0.0.1
+        protocol: tcp
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+  database:
+    build: ./code
+    shm_size: 64m
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    environment:
+      FIXTURE_ROLE: database
+    volumes:
+      - database-data:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+volumes:
+  database-data:

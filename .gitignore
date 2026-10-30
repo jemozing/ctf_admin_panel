@@ -1,0 +1,53 @@
+/bin/
+/var/
+/.cache/
+/.code-review-graph/
+/node_modules/
+/web/node_modules/
+/web/dist/
+/tests/fixtures/runtime/
+/tests/fixtures/vendor/
+*.test
+coverage.out
+.DS_Store
+__pycache__/
+*.pyc
+
+# Local configuration and credentials (the bank fixture is public synthetic data).
+.env
+.env.*
+*.env
+!*.env.example
+!**/.env.example
+!tests/real-services/bank.env
+*.key
+*.pem
+*.p12
+*.pfx
+*.keylog
+
+# Generated state, captures and build metadata.
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
+*.pcap
+*.pcapng
+*.tsbuildinfo
+coverage.*
+.pytest_cache/
+.ruff_cache/
+.venv/
+.idea/
+.vscode/
+
+# Raw acceptance evidence can contain local addresses, sessions and screenshots.
+# Keep the portable index and summary in the public repository.
+/tests/integration/reports/*
+!/tests/integration/reports/README.md
+!/tests/integration/reports/public-summary.json
+# One-off controller pinned to the original private VM's DNS configuration.
+/tests/integration/native_dns_cycle_window.py

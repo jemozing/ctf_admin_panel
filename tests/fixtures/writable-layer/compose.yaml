@@ -1,0 +1,19 @@
+name: ctfm-fixture-layer
+
+# Deliberately unsupported: /data is in the container's writable layer.
+# Registration must identify this risk before any recreation is authorized.
+services:
+  app:
+    build: ./code
+    shm_size: 64m
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    ports:
+      - target: 8080
+        host_ip: 127.0.0.1
+        protocol: tcp
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]

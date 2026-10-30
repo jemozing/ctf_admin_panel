@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Linux / Go / frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      GOCACHE: ${{ github.workspace }}/.cache/go-build
+      GOMODCACHE: ${{ github.workspace }}/.cache/go-mod
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Check publishable source files
+        run: make publication-check
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # Go embeds web/dist, so it must exist before Go tests and vet.
+      - name: Build frontend from the lockfile
+        run: make frontend
+
+      - name: Go race tests
+        timeout-minutes: 15
+        run: make test-race
+
+      - name: Static analysis and frontend helper tests
+        run: make vet frontend-check
+
+      # These checks use temporary fixtures and mocks. They do not fetch or run
+      # SibirCTF services and do not perform the dedicated-host acceptance suite.
+      - name: Packaging and fixture checks
+        run: make packaging-check fixtures-check
+
+      - name: Build all Linux binaries
+        run: make build proxy-build capture-build
