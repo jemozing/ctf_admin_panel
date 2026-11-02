@@ -13,6 +13,19 @@ node tests/integration/action_dialog_http_smoke.cjs
 
 Используется собранный frontend и синтетический HTTP API: открытие «Подготовить»/«Применить», отдельное подтверждение, смена релиза, сохранение ключа между preview/submit, новый ключ после закрытия и видимая ошибка preview. Это UI-регрессия; настоящие executor, Deploy/Rollback, Docker и VM в ней не используются.
 
+## Проверка Git и выбор ветки
+
+```sh
+make build
+go test -race ./internal/sourcegit ./internal/executor ./internal/transport ./internal/dashboard
+python3 tests/integration/git_probe_process_smoke.py \
+  --manager-binary bin/ctf-manager --report var/git-probe-browser.json
+```
+
+Sourcegit-тесты используют настоящий Git и локальный TLS fixture с приватным CA только внутри test runner; production bypass для TLS/DNS не добавляется. Проверяются auth, refs, redirect, отмена, переполнение реального stdout и отсутствие загруженных objects. Для browser smoke нужны Node.js и имеющиеся Playwright/Chromium (либо cached Codex runtime). Он запускает настоящий dashboard, Admin через stdin и синтетический Unix executor: это проверка UI-контракта, без внешней сети/GitHub, Git, Docker или регистрации сервиса. Отчёт не содержит credentials, локальных путей и логов. Для повторного запуска укажите новый путь отчёта.
+
+Успешный UI fixture не подтверждает доступ к публичному Git-серверу. Production probe дополнительно проверяет публичность всех DNS-ответов и доверенный TLS; служебный адрес вместо GitHub вызывает `git_restricted_host`. Успешная проверка подтверждает объявленный ref/OID на момент запроса, а подкаталог/тип объекта/содержимое остаются проверками Fetch.
+
 ## GUI выбора папки без Docker
 
 ```sh

@@ -8,7 +8,7 @@ WEB_SOURCES := $(shell find web/src -type f)
 .PHONY: build proxy-build capture-build frontend frontend-check test test-race vet fixtures-check packaging-check publication-check clean
 frontend: web/dist/index.html
 frontend-check:
-	node --experimental-strip-types --test web/src/metricHistory.test.ts web/src/logHistory.test.ts web/src/proxyTypes.test.ts web/src/packetTypes.test.ts web/src/flowTypes.test.ts web/src/directoryBrowserState.test.ts web/src/operationKey.test.ts
+	node --experimental-strip-types --test web/src/metricHistory.test.ts web/src/logHistory.test.ts web/src/proxyTypes.test.ts web/src/packetTypes.test.ts web/src/flowTypes.test.ts web/src/directoryBrowserState.test.ts web/src/operationKey.test.ts web/src/gitProbeState.test.ts
 web/node_modules/.package-lock.json: web/package.json web/package-lock.json
 	cd web && npm ci
 web/dist/index.html: $(WEB_SOURCES) web/index.html web/tsconfig.json web/vite.config.ts web/node_modules/.package-lock.json

@@ -523,6 +523,26 @@
       "target_linux_acceptance": "open",
       "go_race": "all_internal_and_commands_passed",
       "go_vet": "affected_executor_transport_dashboard_passed"
+    },
+    "git_source_probe": {
+      "recorded_on": "2026-11-02",
+      "status": "passed_locally_with_external_network_limit",
+      "sourcegit_new_test_functions": 12,
+      "executor_new_test_functions": 6,
+      "go_race": "all_internal_and_commands_passed_then_final_sourcegit_passed",
+      "go_vet": "affected_sourcegit_executor_transport_dashboard_passed",
+      "frontend_helper_tests_total": 48,
+      "packaging_tests": 157,
+      "browser_checks": 31,
+      "process_checks": 8,
+      "actual_dashboard": true,
+      "executor_protocol_fixture": true,
+      "actual_git_transport_in_package_tests": true,
+      "live_github_probe": "rejected_before_connection_restricted_dns",
+      "docker_used": false,
+      "vm_touched": false,
+      "raw_published": false,
+      "anchor": "git-probe-local"
     }
   }
 }
