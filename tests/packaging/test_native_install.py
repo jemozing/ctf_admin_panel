@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 import stat
 import sys
 import tempfile
@@ -297,6 +298,41 @@ class NativeInstallTests(unittest.TestCase):
                       result("inactive", returncode=1)):
             with self.subTest(state=value.stdout), patch.object(INSTALL, "command", return_value=value), self.assertRaisesRegex(ValueError, "fully"):
                 INSTALL.require_stopped_units("/usr/bin/systemctl")
+
+    def test_port_probe_rejects_an_active_reusable_loopback_listener(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            port = listener.getsockname()[1]
+            with self.assertRaisesRegex(ValueError, "occupied"):
+                INSTALL.ensure_port_available(port=port)
+
+    def test_port_probe_allows_immediate_rebind_after_closed_tcp_connection(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.settimeout(3)
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            port = listener.getsockname()[1]
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client:
+                client.settimeout(3)
+                client.connect(("127.0.0.1", port))
+                connection, _ = listener.accept()
+                with connection:
+                    connection.settimeout(3)
+                    # The server sends FIN first, so its endpoint enters
+                    # TIME_WAIT when the peer finishes the close handshake.
+                    connection.shutdown(socket.SHUT_WR)
+                    self.assertEqual(client.recv(1), b"")
+                    client.shutdown(socket.SHUT_WR)
+                    self.assertEqual(connection.recv(1), b"")
+        # A plain bind still reproduces the original installer failure. The
+        # reusable probe must accept the very same port without a sleep/retry.
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as plain:
+            with self.assertRaises(OSError):
+                plain.bind(("127.0.0.1", port))
+        INSTALL.ensure_port_available(port=port)
 
     def test_existing_service_identity_cannot_be_root_login_or_docker_group_member(self):
         good = SimpleNamespace(pw_uid=999, pw_gid=998, pw_shell="/usr/sbin/nologin")
