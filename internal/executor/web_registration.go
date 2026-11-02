@@ -163,7 +163,17 @@ func withinProject(root, name string) bool {
 }
 func sensitiveRegistrationName(name string) bool {
 	n := strings.ToLower(name)
-	return strings.HasPrefix(n, ".") || n == "secrets" || n == "secret" || n == "data" || n == "db" || n == "database" || n == "volumes" || n == "logs" || n == "backup" || n == "backups" || strings.HasSuffix(n, ".pem") || strings.HasSuffix(n, ".key")
+	if strings.HasPrefix(n, ".") || n == "secrets" || n == "secret" || n == "data" || n == "db" || n == "database" || n == "uploads" || n == "__pycache__" || n == "volumes" || n == "logs" || n == "backup" || n == "backups" || strings.HasSuffix(n, ".pem") || strings.HasSuffix(n, ".key") {
+		return true
+	}
+	for _, suffix := range []string{".db", ".sqlite", ".sqlite3"} {
+		for _, sidecar := range []string{"", "-journal", "-wal", "-shm"} {
+			if strings.HasSuffix(n, suffix+sidecar) {
+				return true
+			}
+		}
+	}
+	return false
 }
 func suggestRegistrationRole(name, image string) domain.ComponentRole {
 	value := strings.ToLower(name + " " + image)
@@ -188,6 +198,13 @@ func registrationManagedPaths(directory string, files, dataBinds []string) ([]do
 		return nil, err
 	}
 	defer root.Close()
+	return registrationManagedPathsInRoot(context.Background(), root, directory, files, dataBinds)
+}
+
+func registrationManagedPathsInRoot(ctx context.Context, root *os.Root, directory string, files, dataBinds []string) ([]domain.ManagedPath, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	entries, err := fs.ReadDir(root.FS(), ".")
 	if err != nil {
 		return nil, err
@@ -198,6 +215,9 @@ func registrationManagedPaths(directory string, files, dataBinds []string) ([]do
 	managed := []domain.ManagedPath{}
 	walked := 0
 	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		name := entry.Name()
 		if sensitiveRegistrationName(name) || entry.Type()&os.ModeSymlink != 0 {
 			continue
@@ -227,6 +247,9 @@ func registrationManagedPaths(directory string, files, dataBinds []string) ([]do
 		if info.IsDir() {
 			// Select literal exclusions recursively without following symlinks.
 			err = fs.WalkDir(root.FS(), name, func(current string, item fs.DirEntry, walkErr error) error {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				if walkErr != nil {
 					return walkErr
 				}
@@ -253,6 +276,68 @@ func registrationManagedPaths(directory string, files, dataBinds []string) ([]do
 		managed = append(managed, domain.ManagedPath{Path: name, Kind: kind, Exclusions: exclusions})
 	}
 	return managed, nil
+}
+
+// ResolveRegistrationManagedPaths recalculates suggestions for a previously
+// inspected immutable draft. Only names of its discovered bind mounts cross the
+// API boundary; arbitrary host paths and mutable client service maps do not.
+// This is a read-only suggestion, not an approval or runtime mutation.
+func (m *Manager) ResolveRegistrationManagedPaths(ctx context.Context, input transport.RegistrationManagedPathsRequest) (transport.RegistrationManagedPathsResult, error) {
+	result := transport.RegistrationManagedPathsResult{ManagedPaths: []domain.ManagedPath{}}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	if err := transport.ValidateRegistrationManagedPathsRequest(input); err != nil {
+		return result, registrationInvalid(err.Error())
+	}
+	var draft domain.Service
+	if err := m.Store.Get(ctx, "web_registration_draft", input.ServiceID, &draft); err != nil {
+		return result, err
+	}
+	selected := map[string]bool{}
+	for _, name := range input.CodeBindings {
+		selected[name] = true
+	}
+	known := map[string]bool{}
+	dataBinds := []string{}
+	for _, data := range draft.DataPaths {
+		if selected[data.Name] {
+			if known[data.Name] || data.Kind != domain.StorageBind || domain.ValidateAbsolutePath(data.Source) != nil || !withinProject(draft.ProjectDirectory, data.Source) {
+				return result, registrationInvalid("Code bindings must be discovered bind mounts inside the selected project")
+			}
+			known[data.Name] = true
+		} else if data.Kind == domain.StorageBind {
+			dataBinds = append(dataBinds, data.Source)
+		}
+	}
+	if len(known) != len(selected) {
+		return result, registrationInvalid("Choose only discovered bind storage names from this draft")
+	}
+	if err := m.Config.CheckPath(draft.ProjectDirectory, false); err != nil {
+		return result, registrationInvalid("Project directory must exist within an approved discovery root without symbolic links")
+	}
+	root, before, err := openRegistrationDirectory(ctx, draft.ProjectDirectory)
+	if err != nil {
+		return result, registrationDirectoryError(ctx)
+	}
+	defer root.Close()
+	paths, err := registrationManagedPathsInRoot(ctx, root, draft.ProjectDirectory, draft.ComposeFiles, dataBinds)
+	if err != nil {
+		return result, err
+	}
+	afterRoot, after, err := openRegistrationDirectory(ctx, draft.ProjectDirectory)
+	if err != nil {
+		return result, registrationDirectoryError(ctx)
+	}
+	afterRoot.Close()
+	if !os.SameFile(before, after) {
+		return result, registrationInvalid("Service directory changed while inspecting code paths; inspect the project again")
+	}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	result.ManagedPaths = paths
+	return result, nil
 }
 
 func sameRegistrationIdentity(draft, edited domain.Service) bool {

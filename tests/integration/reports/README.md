@@ -506,3 +506,9 @@ Docker endpoint в fixture — отсутствующий временный Uni
 ### `web-registration-git-smoke-2026-10-19.json`
 
 Исходный артефакт сохранён локально. Публичный контекст и ограничения: [Исторические MVP-проверки](#mvp-local), [подробная история и матрица](../../../docs/progress.md).
+
+## Writable code binds: локальные проверки
+
+<a id="writable-code-binds-local"></a>
+
+3 ноября: opt-in конкретных disposable bind-монтов, пересчёт управляемых путей и явное согласие GUI. Общий Go race/vet, сборки, 53 frontend helpers, 193 packaging и 21 Chromium check прошли. Browser использует синтетический API на loopback; executor fixture выполняет настоящие snapshots/MaterializeBuild/Apply/обратный Apply, без Docker lifecycle. Runtime DB/uploads/.env исключены. Реальные Compose/CTF-проверки общего writable root bind остаются открытыми; подробности — [W01–W06](../../../docs/progress.md).

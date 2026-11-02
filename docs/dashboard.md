@@ -74,6 +74,7 @@ bin/ctf-manager dashboard \
 | `GET /api/services` | Зарегистрированные сервисы |
 | `GET /api/registration/options` | Разрешённые корни, только Admin |
 | `POST /api/registration/inspect` | Обнаружение существующего проекта по пути, только Admin |
+| `POST /api/registration/managed-paths` | Пересчёт автопутей по immutable draft ID и именам кодовых bind, только Admin/CSRF |
 | `POST /api/registration/proposals` | Проверка и создание immutable заявки, только Admin |
 | `POST /api/registration/approve` | Подтверждение заявки и постановка инициализации в очередь, только Admin |
 | `GET/POST /api/services/{id}/source` | Метаданные / настройка Git-источника; запись только Admin |

@@ -168,7 +168,13 @@ func RegistrationIssues(c config.Config, service domain.Service, report docker.C
 
 	dataByTarget := map[string]domain.DataPath{}
 	layers := map[string]int{}
+	codeUpdates := false
+	updateTargets := map[string]bool{}
+	for _, target := range service.Targets {
+		updateTargets[target] = true
+	}
 	for _, data := range service.DataPaths {
+		codeUpdates = codeUpdates || data.AllowCodeUpdates
 		if data.Kind == domain.StorageWritableLayer {
 			layers[data.Component]++
 			continue
@@ -225,6 +231,9 @@ func RegistrationIssues(c config.Config, service domain.Service, report docker.C
 			data, classified := dataByTarget[key]
 			if classified && storageMatches(data, mount) {
 				usedData[key] = true
+				if data.AllowCodeUpdates && mount.ReadOnly {
+					add(component, "code_bind_not_writable", mount.Target, "code-update consent applies only to a writable bind mount")
+				}
 			} else if classified {
 				add(component, "storage_identity_mismatch", mount.Target, "registered storage identity differs from the runtime mount")
 			} else if mount.Type != "bind" || !managedBind(service, mount.Source) {
@@ -232,6 +241,14 @@ func RegistrationIssues(c config.Config, service domain.Service, report docker.C
 			}
 			switch mount.Type {
 			case "bind":
+				if codeUpdates && !updateTargets[component] {
+					for _, managed := range service.ManagedPaths {
+						if domain.PathsOverlap(mount.Source, filepath.Join(service.ProjectDirectory, managed.Path)) {
+							add(component, "code_consumer_not_target", mount.Target, "every component consuming managed bind code must be stopped and updated together")
+							break
+						}
+					}
+				}
 				if err := approvedBind(c, mount.Source); err != nil {
 					add(component, "unsafe_bind_source", mount.Source, err.Error())
 				}

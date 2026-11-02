@@ -2,7 +2,22 @@
 
 В публичной версии доступны [обезличенная сводка свидетельств и индекс исторических прогонов](../tests/integration/reports/README.md). Сырые отчёты, логи и снимки экрана сохранены отдельно локально; ссылки ниже ведут на их публичные описания. Статусы матриц не повышались при подготовке репозитория.
 
-План и матрица обновлены 2 ноября 2026 года. Основание: ТЗ v2.14 и выбранный пользователем профиль соревнований `competition-4g`: Linux/amd64, 4 vCPU, 4 GiB RAM, виртуальный диск 40 GiB. Панель запускается через Compose `dashboard` + `executor` либо отдельные systemd-службы. Полная приёмка MVP не завершена; результаты native-поставки учитываются отдельно от CTF-сценариев и прежнего профиля 8 GiB.
+План и матрица обновлены 3 ноября 2026 года. Основание: ТЗ v2.15 и выбранный пользователем профиль соревнований `competition-4g`: Linux/amd64, 4 vCPU, 4 GiB RAM, виртуальный диск 40 GiB. Панель запускается через Compose `dashboard` + `executor` либо отдельные systemd-службы. Полная приёмка MVP не завершена; результаты native-поставки учитываются отдельно от CTF-сценариев и прежнего профиля 8 GiB.
+
+## Обновляемый writable bind-код с допустимой потерей данных — 3 ноября
+
+Добавлен opt-in для конкретных bind-монтов внутри ProjectDirectory: `allow_code_updates=true`, `significant=false`, `loss_accepted=true`. GUI предлагает «Код и временные данные · обновлять», пересчитывает пути через Admin/CSRF endpoint по immutable draft и требует отдельного согласия. Общие root binds подтверждаются у каждого потребителя, все компоненты обновляемого кода входят в Targets. Прежние проверки workspace, source/target/runtime identity, symlinks/parents и конфликтов сохранены. Значимые data binds без opt-in не пересекаются с кодом; старый JSON не получает новое разрешение автоматически.
+
+| Проверка нового профиля | Результат и граница |
+|---|---|
+| W01 — обычный root bind запрещён; явный opt-in только внутри проекта, не significant и с loss acceptance | Пройдено в domain/policy race-тестах; внешние пути, workspace, снятие согласия и неподтверждённый второй consumer отклоняются |
+| W02 — общий writable bind у нескольких компонентов и остальные RO/RW consumers кода | Пройдено: каждый consumer должен быть Targets; read-only code-consent и небезопасный writable parent продолжают блокироваться |
+| W03 — managed-paths API, Admin/CSRF, strict JSON, draft identity, symlink/unknown/duplicate/non-bind/escape | Пройдено через executor/transport/dashboard; список — рекомендация, не approval; immutable draft и registry не изменяются |
+| W04 — реальные snapshots/candidate, MaterializeBuild, Apply и обратный Apply | Пройдено в файловом fixture: add/delete/возврат кода, DB/uploads/.env вне снимков и build context, новые исключённые runtime bytes сохраняются при обратном Apply. Это не Docker Stop/Build/Up |
+| W05 — GUI выбора обоих root binds, согласие, targets, pending/error, пересчёт, повторный draft и final review | 21 Chromium check с собранным React UI и синтетическим loopback API; 5 новых helper-тестов, всего 53 |
+| W06 — реальный Compose Fetch/Build/Deploy/Rollback сервиса с общим writable root bind | Не выполнено; VM и реальные игровые контейнеры не использовались |
+
+Общий `go test -race ./internal/... ./cmd/...`, vet и компиляция всех бинарников, production frontend build, 53 frontend helper и 193 packaging tests — PASS. В release evidence и окне операций показан риск потери данных вместо обещания неизменности кодового bind. [Использование](registration.md#writable-bind-код-без-переноса-данных), [проверки](testing.md#регистрация-writable-bind-кода). Полная Linux/CTF-приёмка и прежние A/P/C-статусы остаются отдельными.
 
 ## Нативная поставка и сборка в Actions — 2 ноября
 

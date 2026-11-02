@@ -317,7 +317,9 @@ func (m *Manager) ReleaseEvidence(ctx context.Context, id, rid domain.ID) (trans
 			}
 		}
 	}
+	codeBindLossAccepted := false
 	for _, d := range s.DataPaths {
+		codeBindLossAccepted = codeBindLossAccepted || d.AllowCodeUpdates
 		if d.Significant {
 			v.DataConfirmationRequired = true
 		}
@@ -325,6 +327,12 @@ func (m *Manager) ReleaseEvidence(ctx context.Context, id, rid domain.ID) (trans
 	v.Checks["data"] = "unchanged_by_rollback"
 	if v.DataConfirmationRequired {
 		v.Checks["data"] = "confirmation_required"
+	}
+	if codeBindLossAccepted {
+		v.Checks["data"] = "code_bind_loss_accepted"
+		if v.DataConfirmationRequired {
+			v.Checks["data"] = "confirmation_required_and_code_bind_loss_accepted"
+		}
 	}
 	operations, e := m.Store.ListOperations(ctx)
 	if e != nil {

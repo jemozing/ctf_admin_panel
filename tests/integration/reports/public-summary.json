@@ -584,5 +584,26 @@
       "anchor": "native-systemd-ci",
       "target_ctf_acceptance": "open"
     }
+  },
+  "writable_code_binds_local": {
+    "date": "2026-11-03",
+    "go_race": "passed",
+    "go_vet": "passed",
+    "all_binaries_compile": "passed",
+    "frontend_build": "passed",
+    "frontend_helper_tests": 53,
+    "packaging_tests": 193,
+    "browser_checks": 21,
+    "browser_api": "synthetic_loopback_fixture",
+    "filesystem_fixture": [
+      "snapshots",
+      "MaterializeBuild",
+      "Apply",
+      "reverse_Apply",
+      "excluded_runtime_bytes_preserved"
+    ],
+    "real_docker_lifecycle_tested": false,
+    "vm_used": false,
+    "ctf_acceptance_complete": false
   }
 }
