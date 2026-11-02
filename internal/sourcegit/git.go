@@ -429,7 +429,7 @@ func publicAddress(ip netip.Addr) bool {
 func checkRepository(repo string) error {
 	var size int64
 	count := 0
-	return filepath.WalkDir(repo, func(_ string, e fs.DirEntry, err error) error {
+	err := filepath.WalkDir(repo, func(_ string, e fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -438,15 +438,42 @@ func checkRepository(repo string) error {
 			return errors.New("Git repository entry limit exceeded")
 		}
 		if e.Type().IsRegular() {
-			info, err := e.Info()
+			entrySize, err := repositoryEntrySize(e)
 			if err != nil {
 				return err
 			}
-			size += info.Size()
+			size += entrySize
 			if size > MaxRepositoryBytes {
 				return errors.New("Git repository byte limit exceeded")
 			}
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	// A temporary lock may disappear during the scan, but losing the whole
+	// repository must still fail the quota check.
+	info, err := os.Lstat(repo)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return errors.New("Git repository directory is unavailable")
+	}
+	return nil
+}
+
+func repositoryEntrySize(entry fs.DirEntry) (int64, error) {
+	info, err := entry.Info()
+	// Git atomically removes or renames temporary pack/ref/maintenance files.
+	// Only a vanished child entry is benign; permission and other errors remain
+	// fatal, and walker/root errors are handled separately by checkRepository.
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return info.Size(), nil
 }
