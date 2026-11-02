@@ -221,7 +221,7 @@ raise SystemExit(1)
             if len(error.cmd) > 1 and Path(str(error.cmd[1])).name == "install.py":
                 diagnostic = (error.stderr or b"").decode("utf-8", errors="replace").splitlines()
                 if diagnostic and diagnostic[0].startswith("native-install: "):
-                report["installer_diagnostic"] = re.sub(r"(?<![A-Za-z0-9])/[^\s'\"]+", "<path>", diagnostic[0])[:512]
+                    report["installer_diagnostic"] = re.sub(r"(?<![A-Za-z0-9])/[^\s'\"]+", "<path>", diagnostic[0])[:512]
         report["unit_states"] = {}
         for unit in UNITS:
             try:

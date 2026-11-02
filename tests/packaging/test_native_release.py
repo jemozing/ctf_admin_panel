@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 import struct
+import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -31,6 +33,17 @@ def elf_bytes(architecture="amd64", program_type=1):
 
 
 class NativeReleaseTests(unittest.TestCase):
+    def test_systemd_smoke_entrypoint_parses_and_requires_explicit_opt_in(self):
+        script = MODULE_PATH.parents[1] / "tests/integration/native_systemd_smoke.py"
+        help_result = subprocess.run([sys.executable, str(script), "--help"], capture_output=True, text=True, timeout=10)
+        self.assertEqual(help_result.returncode, 0, help_result.stderr)
+        self.assertIn("--allow-system-install", help_result.stdout)
+        with tempfile.TemporaryDirectory() as directory:
+            report = Path(directory) / "must-not-exist.json"
+            result = subprocess.run([sys.executable, str(script), "--package-dir", directory, "--report", str(report)], capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse(report.exists())
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="ctfm-release-test-")
         self.addCleanup(self.temporary.cleanup)
