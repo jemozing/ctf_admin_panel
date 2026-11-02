@@ -5,7 +5,7 @@ export GOCACHE GOMODCACHE
 
 WEB_SOURCES := $(shell find web/src -type f)
 
-.PHONY: build proxy-build capture-build frontend frontend-check test test-race vet fixtures-check packaging-check publication-check clean
+.PHONY: build proxy-build capture-build native-release frontend frontend-check test test-race vet fixtures-check packaging-check publication-check clean
 frontend: web/dist/index.html
 frontend-check:
 	node --experimental-strip-types --test web/src/metricHistory.test.ts web/src/logHistory.test.ts web/src/proxyTypes.test.ts web/src/packetTypes.test.ts web/src/flowTypes.test.ts web/src/directoryBrowserState.test.ts web/src/operationKey.test.ts
@@ -21,6 +21,9 @@ proxy-build:
 capture-build:
 	go build -trimpath -o bin/ctfm-capture ./cmd/ctfm-capture
 	go build -trimpath -o bin/ctfm-packets ./cmd/ctfm-packets
+VERSION ?= 0.1.0-dev
+native-release: frontend
+	python3 scripts/build-native-release.py --skip-frontend --version "$(VERSION)"
 test: frontend
 	go test ./internal/... ./cmd/...
 test-race: frontend

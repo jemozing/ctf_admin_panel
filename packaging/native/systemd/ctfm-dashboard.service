@@ -1,0 +1,42 @@
+[Unit]
+Description=CTF Service Manager dashboard
+Documentation=https://github.com/jemozing/ctf_admin_panel
+Wants=ctfm-executor.service
+After=ctfm-executor.service network.target
+
+[Service]
+Type=simple
+User=ctfm-web
+Group=ctfm-ipc
+UMask=0077
+ExecStart=/usr/local/bin/ctf-manager dashboard --state /var/lib/ctf-manager/dashboard --socket /run/ctf-manager/executor.sock --listen 127.0.0.1:8765
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=30s
+KillMode=control-group
+MemoryMax=256M
+TasksMax=128
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+ProtectSystem=strict
+ReadWritePaths=/var/lib/ctf-manager/dashboard
+ReadOnlyPaths=-/run/ctf-manager
+InaccessiblePaths=/etc/ctf-manager /var/lib/ctf-manager/executor -/var/run/docker.sock
+ProtectHome=yes
+ProtectProc=invisible
+ProcSubset=pid
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,4 +1,5 @@
 /bin/
+/dist/
 /var/
 /.cache/
 /.code-review-graph/
