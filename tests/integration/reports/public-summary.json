@@ -523,6 +523,20 @@
       "target_linux_acceptance": "open",
       "go_race": "all_internal_and_commands_passed",
       "go_vet": "affected_executor_transport_dashboard_passed"
+    },
+    "native_systemd_packaging": {
+      "recorded_on": "2026-11-02",
+      "status": "local_cross_build_and_dry_run_passed",
+      "linux_architectures": [
+        "amd64",
+        "arm64"
+      ],
+      "binaries_per_archive": 5,
+      "installer_dry_runs": 2,
+      "linux_amd64_systemd_lifecycle": "ci_pending",
+      "arm64_runtime": "not_tested",
+      "user_vm_touched": false,
+      "ctf_acceptance": "unchanged_open"
     }
   }
 }

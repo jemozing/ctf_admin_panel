@@ -23,7 +23,8 @@ import (
 	"github.com/moby/moby/client"
 )
 
-const version = "0.1.0-dev"
+// Release archives set this at build time with -X main.version.
+var version = "0.1.0-dev"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {

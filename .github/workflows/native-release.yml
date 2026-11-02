@@ -1,0 +1,245 @@
+name: Native release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Build version, e.g. v0.1.0 (empty: dev-<commit>); manual runs do not publish a release"
+        required: false
+        type: string
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    paths:
+      - ".github/workflows/native-release.yml"
+      - "packaging/native/**"
+      - "scripts/build-native-release.py"
+      - "tests/packaging/test_native_*.py"
+      - "tests/integration/native_systemd_smoke.py"
+      - "cmd/**"
+      - "internal/**"
+      - "web/**"
+      - "go.mod"
+      - "go.sum"
+      - "README.md"
+      - "LICENSE"
+      - "docs/native-*.md"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Linux amd64 and arm64 archives
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GOCACHE: ${{ github.workspace }}/.cache/go-build
+      GOMODCACHE: ${{ github.workspace }}/.cache/go-mod
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Check publishable source files
+        run: make publication-check
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Choose and validate version
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          python3 - <<'PY'
+          import importlib.util, os, re
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location("native_release", "scripts/build-native-release.py")
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          if os.environ["GITHUB_EVENT_NAME"] == "push":
+              version = os.environ["GITHUB_REF_NAME"]
+              if not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?", version):
+                  raise SystemExit("Release tags must be vMAJOR.MINOR.PATCH with an optional prerelease suffix")
+          else:
+              version = os.environ.get("REQUESTED_VERSION") or "dev-" + os.environ["GITHUB_SHA"][:12]
+          version = module.validate_version(version)
+          with Path(os.environ["GITHUB_ENV"]).open("a") as output:
+              output.write("NATIVE_VERSION=" + version + "\n")
+          PY
+
+      - name: Test native packaging
+        run: python3 -m unittest discover -s tests/packaging -p 'test_native_*.py'
+
+      - name: Build frontend and both static Linux bundles
+        run: |
+          make frontend
+          python3 scripts/build-native-release.py --version "$NATIVE_VERSION" --skip-frontend
+          cd dist
+          sha256sum --check SHA256SUMS
+
+      - name: Upload native bundles
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-linux-packages
+          path: |
+            dist/*.tar.gz
+            dist/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  runtime-smoke:
+    name: Linux amd64 systemd lifecycle
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - name: Download verified build artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-linux-packages
+          path: dist
+          digest-mismatch: error
+
+      - name: Set up compatible Docker Compose
+        uses: docker/setup-compose-action@54042514f505b273907334ae2b9cdbb9a0213c1a # v2
+        with:
+          version: v5.5.0
+
+      # setup-compose installs for the runner account. The native installer and
+      # executor run as root, so copy that pinned binary into the system search
+      # path on this disposable runner and verify the root context explicitly.
+      - name: Make the pinned Compose version available to root
+        run: |
+          python3 - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          plugins = json.loads(subprocess.check_output(["docker", "info", "--format", "{{json .ClientInfo.Plugins}}"], text=True))
+          matches = [item for item in plugins if item.get("Name") == "compose" and item.get("Version", "").lstrip("v") == "5.5.0"]
+          if len(matches) != 1:
+              raise SystemExit("Pinned Compose plugin was not found in runner metadata")
+          source = Path(matches[0]["Path"]).resolve(strict=True)
+          if not source.is_file() or source.name != "docker-compose":
+              raise SystemExit("Unexpected Compose plugin path")
+          subprocess.run(["sudo", "install", "-D", "-o", "root", "-g", "root", "-m", "0755", str(source), "/usr/local/lib/docker/cli-plugins/docker-compose"], check=True)
+          actual = subprocess.check_output(["sudo", "docker", "compose", "version", "--short"], text=True).strip().lstrip("v")
+          if actual != "5.5.0":
+              raise SystemExit("Root Docker Compose version does not match the tested profile")
+          PY
+
+      - name: Verify and extract amd64 bundle
+        run: |
+          cd dist
+          sha256sum --check SHA256SUMS
+          cd ..
+          python3 - <<'PY'
+          import tarfile
+          from pathlib import Path
+          archives = list(Path("dist").glob("ctf-manager_*_linux_amd64.tar.gz"))
+          if len(archives) != 1:
+              raise SystemExit("Expected exactly one amd64 package")
+          with tarfile.open(archives[0]) as archive:
+              archive.extractall("native-staging", filter="data")
+          PY
+
+      # Hosted images can intentionally expose writable scratch/install
+      # parents. Match a production host only on this disposable runner;
+      # the installer itself never changes ownership or repairs permissions.
+      - name: Prepare trusted system parents on the ephemeral runner
+        run: |
+          sudo env GITHUB_ACTIONS=true python3 - <<'PY'
+          import json, os, stat
+          from pathlib import Path
+          if os.environ.get("GITHUB_ACTIONS") != "true" or os.geteuid() != 0:
+              raise SystemExit("Only an ephemeral root GitHub runner is supported")
+          paths = ("/usr/local", "/usr/local/bin", "/usr/local/lib", "/usr/local/lib/docker", "/usr/local/lib/docker/cli-plugins", "/mnt", "/mnt/docker", "/var/lib/docker")
+          inventory = []
+          for name in paths:
+              path = Path(name)
+              if not path.exists():
+                  continue
+              info = path.lstat()
+              record = {"path": name, "uid": info.st_uid, "mode": oct(stat.S_IMODE(info.st_mode))}
+              if stat.S_ISDIR(info.st_mode) and info.st_uid == 0 and info.st_mode & 0o022:
+                  path.chmod(stat.S_IMODE(info.st_mode) & ~0o022)
+                  record["prepared_mode"] = oct(stat.S_IMODE(path.stat().st_mode))
+              inventory.append(record)
+          print(json.dumps(inventory))
+          PY
+
+      - name: Exercise installer, services, restart and upgrade
+        run: |
+          packages=(native-staging/ctf-manager_*_linux_amd64)
+          test "${#packages[@]}" -eq 1
+          sudo env GITHUB_ACTIONS=true PYTHONDONTWRITEBYTECODE=1 \
+            python3 tests/integration/native_systemd_smoke.py \
+            --package-dir "${packages[0]}" \
+            --report var/publication/native-systemd-smoke.json \
+            --allow-system-install
+
+      - name: Upload redacted native smoke report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-systemd-smoke
+          path: var/publication/native-systemd-smoke.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  publish:
+    name: Publish version tag to GitHub Releases
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [build, runtime-smoke]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download verified build artifacts
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: native-linux-packages
+          path: dist
+          digest-mismatch: error
+
+      - name: Verify archives and publish the existing tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cd dist
+          sha256sum --check SHA256SUMS
+          release_options=()
+          if [[ "$RELEASE_TAG" == *-* ]]; then
+            release_options+=(--prerelease)
+          fi
+          gh release create "$RELEASE_TAG" ./*.tar.gz ./SHA256SUMS \
+            --verify-tag --title "CTF Service Manager $RELEASE_TAG" \
+            --generate-notes "${release_options[@]}"
