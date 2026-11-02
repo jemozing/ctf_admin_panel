@@ -20,6 +20,12 @@ type registrationTestBackend struct {
 func (*registrationTestBackend) RegistrationOptions(context.Context) (RegistrationOptions, error) {
 	return RegistrationOptions{DiscoveryRoots: []string{"/srv/services"}, WorkspaceRoots: []string{"/srv/workspaces"}}, nil
 }
+func (*registrationTestBackend) BrowseRegistrationDirectories(_ context.Context, r RegistrationBrowseRequest) (RegistrationDirectoryListing, error) {
+	if r.Directory != "" && r.Directory != "/srv/services" {
+		return RegistrationDirectoryListing{}, &RegistrationInputError{Message: "Directory outside approved roots"}
+	}
+	return RegistrationDirectoryListing{Directory: r.Directory, Directories: []RegistrationDirectoryEntry{{Name: "game", Path: "/srv/services/game"}}, ComposeFiles: []string{}}, nil
+}
 func (*registrationTestBackend) InspectRegistration(_ context.Context, r RegistrationInspectRequest) (RegistrationInspection, error) {
 	if r.ProjectDirectory != "/srv/services/game" {
 		return RegistrationInspection{}, &RegistrationInputError{Message: "Project outside approved roots"}
@@ -41,6 +47,15 @@ func TestTypedRegistrationRoutesAndSafeValidation(t *testing.T) {
 	options, err := c.RegistrationOptions(t.Context())
 	if err != nil || len(options.DiscoveryRoots) != 1 {
 		t.Fatalf("options: %#v %v", options, err)
+	}
+	listing, err := c.BrowseRegistrationDirectories(t.Context(), RegistrationBrowseRequest{Directory: "/srv/services"})
+	if err != nil || listing.Directory != "/srv/services" || len(listing.Directories) != 1 || listing.Directories[0].Path != "/srv/services/game" {
+		t.Fatalf("directory listing: %#v %v", listing, err)
+	}
+	_, err = c.BrowseRegistrationDirectories(t.Context(), RegistrationBrowseRequest{Directory: "/etc"})
+	var browseError *ProtocolError
+	if !errors.As(err, &browseError) || browseError.Status != 400 || !strings.Contains(browseError.Message, "approved") {
+		t.Fatalf("directory validation lost: %v", err)
 	}
 	inspection, err := c.InspectRegistration(t.Context(), RegistrationInspectRequest{ProjectDirectory: "/srv/services/game"})
 	if err != nil || inspection.Service.ID != "draft-game" {
@@ -76,6 +91,35 @@ func TestTypedRegistrationRoutesAndSafeValidation(t *testing.T) {
 	}
 	if b.approvals.Load() != 1 {
 		t.Fatal("invalid approval reached backend")
+	}
+}
+
+func TestRegistrationDirectoryRequestRejectsQueryMethodAndAmbiguousJSON(t *testing.T) {
+	_, c := runServer(t, Options{Backend: &registrationTestBackend{}})
+	for _, tc := range []struct {
+		method, suffix, body string
+		status               int
+	}{
+		{"GET", "", "", 405},
+		{"POST", "?root=/etc", `{}`, 400},
+		{"POST", "", `{"directory":"/srv/services","directory":"/etc"}`, 400},
+		{"POST", "", `{"Directory":"/srv/services"}`, 400},
+		{"POST", "", `{"directory":"/srv/services","root":"/etc"}`, 400},
+		{"POST", "", `{"directory":true}`, 400},
+	} {
+		r, err := http.NewRequest(tc.method, "http://executor/v1/registration/directories"+tc.suffix, strings.NewReader(tc.body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.Header.Set("Content-Type", "application/json")
+		response, err := c.http.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != tc.status {
+			t.Errorf("%s %s %s: got %d want %d", tc.method, tc.suffix, tc.body, response.StatusCode, tc.status)
+		}
 	}
 }
 

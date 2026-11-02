@@ -6,6 +6,7 @@ import type {DataPath,RegistrationApproval,RegistrationInspection,RegistrationOp
 import {Badge,Button,Modal,Notice} from './ui'
 import {emptyGitDraft,GitFields,gitSourceInput} from './GitSource'
 import type {GitDraft} from './GitSource'
+import DirectoryPicker from './DirectoryPicker'
 
 const errorMessage=(error:unknown)=>error instanceof Error?error.message:'Не удалось выполнить запрос'
 const storageLabel:Record<string,string>={bind:'Каталог хоста',named_volume:'Docker volume',anonymous_volume:'Анонимный volume',writable_layer:'Слой контейнера',tmpfs:'Временная память'}
@@ -15,6 +16,7 @@ const volatile=(data:DataPath)=>['writable_layer','tmpfs'].includes(data.kind)
 export default function RegistrationDialog({onClose,onRegistered}:{onClose:()=>void;onRegistered:(service:Service,sourceTab:boolean)=>void}){
   const [options,setOptions]=useState<RegistrationOptions|null>(null),[stage,setStage]=useState<'path'|'review'|'confirm'|'complete'>('path'),[path,setPath]=useState('')
   const [exclusionText,setExclusionText]=useState<string[]>([])
+  const [pickerOpen,setPickerOpen]=useState(false)
   const [service,setService]=useState<RegistrationService|null>(null),[warnings,setWarnings]=useState<string[]>([]),[proposal,setProposal]=useState<RegistrationProposal|null>(null)
   const [busy,setBusy]=useState(false),[optionsLoading,setOptionsLoading]=useState(true),[error,setError]=useState(''),[confirmed,setConfirmed]=useState(false)
   const [useGit,setUseGit]=useState(false),[git,setGit]=useState<GitDraft>(emptyGitDraft),[gitError,setGitError]=useState(''),[approval,setApproval]=useState<RegistrationApproval|null>(null)
@@ -28,10 +30,11 @@ export default function RegistrationDialog({onClose,onRegistered}:{onClose:()=>v
   return <Modal open wide onClose={()=>{if(!busy)onClose()}} title={title} description={stage==='path'?'Укажите каталог существующего Compose-проекта на хосте Docker.':'Проверьте компоненты, файлы и игровые данные перед подтверждением.'}>
     {stage==='path'&&<form onSubmit={event=>void inspect(event)}><div className="dialog-body registration-body">{error&&<Notice variant="error">{error}</Notice>}
       <div className="registration-steps"><Badge tone="good">1 · Каталог</Badge><span>2 · Проверка</span><span>3 · Подтверждение</span></div>
-      <label>Путь к сервису<input autoFocus required value={path} onChange={event=>setPath(event.target.value)} placeholder="/srv/ctf/services/my-service" disabled={busy}/><small>Используйте путь хоста, указанный в разрешённых каталогах ниже.</small></label>
+      <div className="registration-path-control"><label htmlFor="registration-project-path">Путь к сервису</label><div className="registration-path-input"><input id="registration-project-path" autoFocus required value={path} onChange={event=>{setPath(event.target.value);setPickerOpen(false)}} placeholder="/srv/ctf/services/my-service" disabled={busy} aria-describedby="registration-project-path-help"/><Button id="registration-directory-trigger" type="button" variant="outline" disabled={busy||optionsLoading||!options?.discovery_roots?.length} aria-expanded={pickerOpen} aria-controls="registration-directory-picker" onClick={()=>setPickerOpen(value=>!value)}><FolderOpen size={15}/>Выбрать папку</Button></div><small id="registration-project-path-help">Выберите папку Docker-хоста или введите её полный путь вручную.</small></div>
+      {pickerOpen&&options&&<DirectoryPicker initialDirectory={path} roots={options.discovery_roots} disabled={busy} onSelect={selected=>{setPath(selected);setError('');setPickerOpen(false);document.getElementById('registration-directory-trigger')?.focus()}} onClose={()=>{setPickerOpen(false);document.getElementById('registration-directory-trigger')?.focus()}}/>}
       {optionsLoading?<div className="loading-line"><RefreshCw size={15} className="spin"/>Получаем доступные каталоги…</div>:options&&<div className="registration-roots"><span>Доступные каталоги сервисов</span>{options.discovery_roots?.map(root=><code key={root}>{root}</code>)}{!options.discovery_roots?.length&&<Notice variant="warning">Каталоги сервисов не подключены. Добавьте каталог к executor в настройках установки Docker Compose.</Notice>}</div>}
       <Notice>Панель обнаружит уже созданные контейнеры Compose и предложит настройки. Перед регистрацией проект должен быть запущен на этом Docker-хосте.</Notice>
-    </div><div className="dialog-footer"><Button type="button" variant="outline" disabled={busy} onClick={onClose}>Отмена</Button><Button type="submit" busy={busy} disabled={optionsLoading||!options?.discovery_roots?.length}><FolderOpen size={15}/>Найти сервис</Button></div></form>}
+    </div><div className="dialog-footer"><Button type="button" variant="outline" disabled={busy} onClick={onClose}>Отмена</Button><Button type="submit" busy={busy} disabled={pickerOpen||optionsLoading||!options?.discovery_roots?.length}><FolderOpen size={15}/>Найти сервис</Button></div></form>}
     {stage==='review'&&service&&<form onSubmit={event=>void prepare(event)}><div className="dialog-body registration-body">{error&&<Notice variant="error">{error}</Notice>}
       <div className="registration-steps"><span>1 · Каталог</span><Badge tone="good">2 · Проверка</Badge><span>3 · Подтверждение</span></div>
       {warnings.length>0&&<Notice variant="warning"><ul className="registration-warnings">{warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></Notice>}

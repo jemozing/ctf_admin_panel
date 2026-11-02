@@ -8,6 +8,16 @@
 
 ## Границы подтверждений
 
+<a id="directory-picker-local"></a>
+
+### GUI выбора папки — 2 ноября 2026 года
+
+Добавлен ограниченный просмотр папок Docker-хоста для Admin. Восемь новых Go backend-тестов с race проверяют границы discovery roots, символические ссылки и конкурентную подмену, имена, лимиты, FIFO и отмену. Dashboard/Unix API проверяют RBAC, CSRF и строгий JSON. Полный Go race-прогон и vet затронутых пакетов пройдены. Четыре новых helper-теста входят в 42 frontend checks; frontend и manager собраны, 157 packaging checks пройдены.
+
+Реальный Chromium через отдельные dashboard/executor прошёл 32 browser checks и 5 process checks без API mocks: навигация, Compose-подсказка, выбор, отмена, ручной ввод, ошибка/повтор, исключение ссылок и узкий экран. Все временные процессы завершены. Сырые отчёты остаются локально; [скрипт повторения](../directory_picker_process_smoke.py) и [инструкция](../../../docs/testing.md#gui-выбора-папки-без-docker) опубликованы.
+
+Docker endpoint в fixture — отсутствующий временный Unix socket; VM и контейнеры не использовались, сервисы не регистрировались. Linux/CTF приёмка и прежние A/P/C статусы остаются открытыми.
+
 <a id="mvp-local"></a>
 
 ### Исторические MVP-проверки
