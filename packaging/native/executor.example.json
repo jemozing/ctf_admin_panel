@@ -1,0 +1,11 @@
+{
+  "state_directory": "/var/lib/ctf-manager/executor",
+  "socket": "/run/ctf-manager/executor.sock",
+  "docker_host": "unix:///var/run/docker.sock",
+  "docker_binary": "/usr/bin/docker",
+  "discovery_roots": ["/srv/game-services"],
+  "workspace_roots": ["/srv/ctf-workspaces"],
+  "web_uid": 999,
+  "host_metrics": true,
+  "development": false
+}

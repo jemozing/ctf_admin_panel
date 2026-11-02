@@ -1,0 +1,48 @@
+[Unit]
+Description=CTF Service Manager executor
+Documentation=https://github.com/jemozing/ctf_admin_panel
+Wants=docker.service
+After=docker.service network.target
+
+[Service]
+Type=simple
+User=root
+Group=ctfm-ipc
+UMask=0077
+ExecStart=/usr/local/bin/ctf-manager --config /etc/ctf-manager/executor.json executor
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=60s
+KillMode=control-group
+MemoryMax=384M
+TasksMax=256
+RuntimeDirectory=ctf-manager ctf-manager-host
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SETUID CAP_SETGID CAP_KILL
+AmbientCapabilities=
+ProtectSystem=strict
+ReadWritePaths=/var/lib/ctf-manager/executor /run/ctf-manager /run/ctf-manager-host /tmp
+# The installer adds approved service/workspace roots in 10-storage.conf.
+PrivateTmp=no
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# Keep the same exact read-only host evidence as the Compose deployment.
+BindReadOnlyPaths=/proc/stat:/run/ctf-manager-host/stat
+BindReadOnlyPaths=/proc/meminfo:/run/ctf-manager-host/meminfo
+BindReadOnlyPaths=/proc/loadavg:/run/ctf-manager-host/loadavg
+BindReadOnlyPaths=/proc/uptime:/run/ctf-manager-host/uptime
+BindReadOnlyPaths=/proc/1/net/dev:/run/ctf-manager-host/net-dev
+Environment=DOCKER_CONFIG=/var/lib/ctf-manager/executor/docker-config
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

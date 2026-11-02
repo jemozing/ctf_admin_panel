@@ -1,135 +1,148 @@
 # CTF Service Manager
 
-[MIT](LICENSE) · [Разработка и проверки](CONTRIBUTING.md) · [Сообщения об уязвимостях](SECURITY.md)
+Веб-панель для управления сервисами своей команды на Attack/Defense CTF. Помогает обновлять код, собирать новые версии и откатывать изменения, сохраняя отдельно игровые данные.
 
-Панель управления сервисами одной команды на Attack/Defense CTF. Проект разрабатывается по [техническому заданию](docs/technical-specification.md), начиная с контрактов, тестового стенда и локального executor.
+[MIT](LICENSE) · [Разработка](https://github.com/jemozing/ctf_admin_panel/blob/main/CONTRIBUTING.md) · [Уязвимости](https://github.com/jemozing/ctf_admin_panel/blob/main/SECURITY.md)
 
-**Текущий статус:** реализована рабочая вертикаль MVP: Compose `dashboard + executor`, авторизация/RBAC, регистрация, baseline, Prepare/Build, Deploy/Rollback, восстановление прерванной операции, журнал, метрики хоста и контейнеров с часовой историей. Сквозные проверки выполняются на синтетическом стенде. Полная приёмка MVP на боевом Linux-хосте ещё не завершена; подтверждения и оставшиеся пункты перечислены в [состоянии разработки](docs/progress.md).
+## Что умеет
 
-Реализован отдельный opt-in HTTP Proxy с журналом трафика и базовым WAF: страницы «Трафик» / «Proxy / WAF», маршруты на свободных портах, фильтры сервисов, rate/burst по IP и временные баны. Есть HTTP/1.1, отдельный HTTPS/2→h2c/gRPC профиль, TLS termination и подтверждённый групповой перенос/возврат занятых портов нескольких application-компонентов и TCP-портов одного сервиса. Соревновательная приёмка на VM остаётся открытой. [Установка](docs/http-proxy-install.md), [план и матрица P01–P16](docs/http-proxy-waf-plan.md). По решению пользователя повторные проверки нестабильной VM отложены; это не закрывает приёмку MVP.
+- Добавлять существующие Docker Compose-сервисы через панель: выбрать папку, проверить компоненты и подтвердить регистрацию.
+- Получать исходники из GitHub/GitLab по HTTPS Git URL, собирать и применять версии, выполнять Rollback.
+- Создавать снимки кода и резервные копии состояния панели, управлять ротацией и квотами.
+- Показывать состояние контейнеров, логи и метрики с историей за 60 минут.
+- Разделять доступ между Admin, Defender и Viewer.
+- Через дополнительные модули: HTTP Proxy, TLS, лимиты запросов и блокировки IP, просмотр HTTP-трафика, TCP/UDP-пакетов и экспорт PCAP.
 
-Добавлено независимое пассивное наблюдение TCP/UDP: «Трафик → Пакеты», фильтры, hex/ASCII и экспорт PCAP. Подключение — opt-in Linux capture, по умолчанию только метаданные. Реализованы TCP-потоки/UDP-датаграммы, HTTP2/gRPC и protobuf descriptors с привязкой к версии; [использование](docs/traffic-analysis.md). [Установка](docs/packet-capture-deployment.md), [контракт и матрица C01–C10](docs/packet-capture-plan.md). Локальные fixtures проверены; живой Linux capture и нагрузка ещё не приняты.
+Панель рассчитана на один Docker-хост и сервисы одной команды. Полная приёмка на соревновательном Linux-стенде ещё не завершена; [проверки и ограничения](https://github.com/jemozing/ctf_admin_panel/blob/main/docs/progress.md).
 
-## Основной запуск: Docker Compose
+## Выбрать способ установки
 
-На Linux Docker-хосте подготовьте отдельные каталоги и список разрешённых игровых проектов. Bootstrap не меняет существующие сервисы:
+| Вариант | Как работает панель | Когда выбирать |
+|---|---|---|
+| [Docker Compose](#docker-compose) | Два контейнера: dashboard и executor | Развёртывание из исходников через Compose |
+| [Нативно с systemd](#нативно-с-systemd) | Готовый бинарник, две системные службы | Установка без сборки Go/npm на сервере |
 
-```sh
+В обоих вариантах игровые сервисы остаются в Docker. Нужны Linux, работающий Docker Engine, Docker Compose v5.5.0+, Git 2.40+ и Python 3.10+. Для нативного варианта также нужен systemd 247+. Каталог `/srv/game-services` ниже — пример общего каталога сервисов; используйте свой путь при необходимости.
+
+## Docker Compose
+
+На Docker-хосте скачайте проект и подготовьте каталоги:
+
+```bash
+git clone https://github.com/jemozing/ctf_admin_panel.git
+cd ctf_admin_panel
+sudo mkdir -p /srv/game-services /srv/ctf-workspaces
+
 sudo python3 scripts/compose-bootstrap.py \
   --host-metrics \
   --discovery-root /srv/game-services \
   --workspace-root /srv/ctf-workspaces
-sudo docker compose --env-file /srv/ctf-manager/config/compose.env config --quiet
+
 sudo docker compose --env-file /srv/ctf-manager/config/compose.env build
 ```
 
-Создайте первого администратора локальным `init-admin` в контейнере dashboard по [инструкции](docs/container-deployment.md), затем:
+Создайте первого администратора. Введите пароль длиной от 12 байт после `read` и нажмите Enter; символы пароля не отображаются:
 
-```sh
-sudo docker compose --env-file /srv/ctf-manager/config/compose.env up -d --build
+```bash
+sudo -v
+read -r -s CTFM_INITIAL_PASSWORD
+printf '%s\n' "$CTFM_INITIAL_PASSWORD" | \
+  sudo docker compose --env-file /srv/ctf-manager/config/compose.env \
+  run --rm --no-deps -T dashboard init-admin \
+  --state /var/lib/ctf-manager --username admin
+unset CTFM_INITIAL_PASSWORD
+
+sudo docker compose --env-file /srv/ctf-manager/config/compose.env up -d
 ```
 
-`dashboard` работает с UID 10001 и публикуется только на `127.0.0.1:8765`. `executor` получает Docker socket и явно разрешённые host-каталоги. Игровые проекты остаются независимыми от Compose панели. Подробные шаги создания администратора, права каталогов, SSH-доступ и ограничения — в [инструкции контейнерного развёртывания](docs/container-deployment.md).
+Откройте **http://127.0.0.1:8765/** на сервере. Вход: `admin` и заданный пароль. Для доступа с другого компьютера используйте [SSH-туннель](#доступ-со-своего-компьютера).
 
-## Сборка и проверки
+Bootstrap подключает только указанные каталоги. Установка панели не запускает и не пересоздаёт игровые сервисы. [Подробная установка и обновление через Compose](https://github.com/jemozing/ctf_admin_panel/blob/main/docs/container-deployment.md).
 
-Требуются Go 1.26+, Node.js 22.12+ и npm. `make build` собирает React/TypeScript frontend и встраивает его в Go-бинарник. Первичная загрузка зависимостей требует сети; версии закреплены в Go и npm lock-файлах. Dockerfile выполняет эти шаги самостоятельно.
+## Нативно с systemd
 
-```sh
-make build
-make proxy-build capture-build
-make test
-make test-race
-make vet
-bin/ctf-manager version
+Готовый архив содержит веб-интерфейс внутри бинарника, установщик, systemd-службы и примеры конфигурации. Go и Node.js на сервере не нужны.
+
+1. Откройте [Actions → Native release](https://github.com/jemozing/ctf_admin_panel/actions/workflows/native-release.yml), нажмите **Run workflow** и дождитесь завершения.
+2. Скачайте artifact **native-linux-packages** и распакуйте zip. Внутри — два Linux-архива и файл `SHA256SUMS`. Опубликованные версионные архивы также будут доступны в [Releases](https://github.com/jemozing/ctf_admin_panel/releases).
+3. Перенесите файлы на сервер. Для обычного x86-64 Linux выберите `amd64`; для ARM64 — `arm64`.
+
+В каталоге со скачанными файлами:
+
+```bash
+sha256sum --ignore-missing -c SHA256SUMS
+tar -xzf ctf-manager_*_linux_amd64.tar.gz
+cd ctf-manager_*_linux_amd64
+
+python3 install.py --dry-run
+sudo python3 install.py \
+  --discovery-root /srv/game-services \
+  --workspace-root /srv/ctf-workspaces
 ```
 
-Кеш Go размещается в `.cache/` проекта. Бинарники находятся в `bin/`, локальное состояние — в игнорируемом `var/`. Исходники сторонних сервисов загружаются в игнорируемый vendor-каталог; приложение не запускает их exploit/checker-скрипты.
+Для ARM64 замените `amd64` на `arm64` в имени архива и каталога. Установщик проверяет пакет и зависимости, создаёт служебного пользователя и не запускает службы автоматически.
 
-GitHub Actions выполняет сборку frontend, Go race/vet, helper-тесты, проверки упаковки/fixtures и сборку пяти бинарников на Linux. Нагрузочные и аварийные сценарии требуют отдельного стенда.
+Создайте администратора и включите панель:
 
-В репозиторий входят исходники, lock-файлы, примеры конфигурации и документация. Секреты, рабочее состояние, сборки, загруженные игровые проекты и сырые отчёты исключены; [публичная сводка проверок](tests/integration/reports/README.md) сохраняет статусы и ограничения. Перед публикацией выполните `make publication-check` после `git add .`: проверяются файлы из Git index.
+```bash
+sudo -v
+read -r -s CTFM_INITIAL_PASSWORD
+printf '%s\n' "$CTFM_INITIAL_PASSWORD" | \
+  sudo runuser -u ctfm-web -g ctfm-ipc -- \
+  /usr/local/bin/ctf-manager init-admin \
+  --state /var/lib/ctf-manager/dashboard --username admin
+unset CTFM_INITIAL_PASSWORD
 
-Восстанавливаемые каталоги `.cache/`, `web/node_modules/`, `var/preview/minio-gocache/` и `var/preview/minio-modcache/` можно удалять при остановленных сборках. Следующий `make build` загрузит зависимости заново. Сохраняйте остальные файлы `var/`: там находятся настройки, состояние, секреты и данные стендов.
-
-## Локальная разработка
-
-Требуются Docker Engine и Compose plugin. На macOS используется явный development-профиль; он не подтверждает разделение UID и эксплуатационные гарантии Linux.
-
-```sh
-python3 scripts/dev-bootstrap.py
-bin/ctf-manager --config var/executor.dev.json doctor
-bin/ctf-manager --config var/executor.dev.json inventory --project ctfm-example
+sudo systemctl enable --now ctfm-executor ctfm-dashboard
+sudo systemctl status ctfm-executor ctfm-dashboard --no-pager
 ```
 
-Для проверки Compose без изменения контейнеров:
+Панель откроется на **http://127.0.0.1:8765/**. Логи:
 
-```sh
-bin/ctf-manager --config var/executor.dev.json inspect-project \
-  --directory /absolute/path/inside/approved/root \
-  --project existing-compose-project \
-  --files compose.yaml
+```bash
+sudo journalctl -u ctfm-executor -u ctfm-dashboard -f
 ```
 
-`inspect-project` читает только проект внутри заранее разрешённого корня. Compose получает защищённые копии YAML/env-входов; вывод скрывает значения environment. Возможные проблемы профиля возвращаются отдельными diagnostics и блокируют регистрацию.
+Dashboard работает от непривилегированного пользователя, executor — с правами управления Docker и разрешёнными каталогами. Конфигурация находится в `/etc/ctf-manager`, состояние — в `/var/lib/ctf-manager`.
 
-Локальный executor и отдельный клиент состояния:
+Это отдельная установка: переход с работающей Compose-панели требует переноса состояния. [Нативная установка, обновление и дополнительные модули](docs/native-install.md).
 
-```sh
-bin/ctf-manager --config var/executor.dev.json executor
-# В другом терминале:
-bin/ctf-manager --config var/executor.dev.json status
+## Доступ со своего компьютера
+
+Оба варианта по умолчанию слушают loopback сервера. Выполните на своём компьютере:
+
+```bash
+ssh -N -L 8765:127.0.0.1:8765 user@SERVER
 ```
 
-Executor использует Unix socket с проверкой UID клиента. Фиксированные API предоставляют реестр, состояние, предпросмотр и долговечные операции. Любая операция требует свежего `plan_digest`; после аварии шаги не повторяются автоматически. Собственный stale socket восстанавливается под эксклюзивной блокировкой; живой или чужой socket не удаляется.
+Откройте **http://127.0.0.1:8765/**. Для постоянного сетевого доступа настройте HTTPS и разрешённые Host по [инструкции](https://github.com/jemozing/ctf_admin_panel/blob/main/docs/dashboard.md).
 
-## Регистрация
+## Добавить первый сервис
 
-Политика сервиса включает подтверждённые container/image IDs, project name, управляемые пути, отдельный source workspace и классификацию всех хранилищ. Подробности — в [инструкции регистрации](docs/registration.md).
+1. Разместите проект внутри разрешённого каталога, например `/srv/game-services/vuln-service`, и запустите его через Docker Compose на этом хосте.
+2. Войдите как Admin → **Добавить сервис** → **Выбрать папку**. Можно ввести полный путь вручную, без кавычек: `/srv/game-services/vuln-service`.
+3. Проверьте компоненты, обновляемые файлы и хранилища. Значимые игровые данные должны храниться отдельно от обновляемого кода.
+4. Подтвердите регистрацию и дождитесь создания исходного снимка и рабочей копии.
+5. При необходимости подключите Git URL. Дальше: **Получить из Git → Build → Deploy**; для возврата — **Rollback**.
 
-Основной сценарий MVP — через панель: войдите как Admin → «Добавить сервис» → укажите host-путь существующего Compose-проекта внутри разрешённого корня → проверьте компоненты, пути кода и хранилища → просмотрите и подтвердите заявку. CLI не требуется. Панель автоматически ставит создание baseline и source workspace в очередь; до завершения инициализации обновление недоступно. Повтор подтверждения не создаёт второй сервис.
+Текущая регистрация импортирует уже созданные Compose-контейнеры. Она не выполняет первый запуск нового проекта из одной папки или Git URL. [Подробности регистрации](https://github.com/jemozing/ctf_admin_panel/blob/main/docs/registration.md).
 
-Путь можно выбрать кнопкой «Выбрать папку»: откройте разрешённый каталог Docker-хоста, перейдите к сервису и нажмите «Выбрать эту папку». Ручной ввод сохранён. Выбор папки не запускает сервис: его Compose-контейнеры должны уже существовать.
+## Собрать самостоятельно
 
-GitHub/GitLab подключаются необязательным HTTPS Git URL при добавлении или на вкладке «Git-источник». Укажите ref и при необходимости подкаталог и read-only токен. «Получить из Git» создаёт отдельный кандидат с точным SHA; далее Build → Deploy. Для локальных правок workspace сохраняется Prepare → Build → Deploy. В MVP Git-сервер должен иметь публично маршрутизируемый адрес и доверенный TLS; SSH, private-network GitLab и API провайдеров остаются расширениями.
+В checkout проекта на машине сборки нужны Go 1.26+, Node.js 22.12+, npm и Python 3.10+:
 
-Кнопка «Проверить подключение» проверяет доступ к Git URL с указанными данными и получает список веток для интерактивного выбора. Выбранный ref проверяется отдельно; подкаталог и содержимое подтверждаются при Fetch. Проверка доступна до сохранения источника и не меняет сервис.
-
-Дополнительный локальный административный способ:
-
-```sh
-bin/ctf-manager --config var/executor.dev.json propose --service service.json
-bin/ctf-manager --config var/executor.dev.json approve \
-  --proposal proposal-REVIEWED_ID --digest sha256:REVIEWED_DIGEST
-bin/ctf-manager --config var/executor.dev.json services
+```bash
+make build                       # бинарник панели для текущей системы
+make proxy-build capture-build   # дополнительные модули
+make native-release VERSION=v0.1.0
 ```
 
-Подтверждение относится к неизменяемой заявке и её digest. Оно не запускает и не пересоздаёт контейнеры. В локальном CLI-сценарии после регистрации создайте baseline через Snapshot; веб-сценарий делает это автоматически. Прежде чем применять изменения, изучите [pipeline релизов и восстановления](docs/release-pipeline.md).
+Последняя команда создаёт архивы Linux amd64/arm64 и контрольные суммы в `dist/`. Сборка через Actions даёт тот же формат без установки компиляторов на игровой сервер. [Сборка, artifacts и выпуск по тегу](docs/native-release.md).
 
 ## Документация
 
-- [ТЗ, границы MVP и этапы](docs/technical-specification.md).
-- [Обязательный функционал MVP и границы приёмки](docs/mvp-functionality.md).
-- [План HTTP Proxy, страницы трафика и WAF после MVP](docs/http-proxy-waf-plan.md).
-- [Пассивные TCP/UDP пакеты, PCAP и матрица C01–C10](docs/packet-capture-plan.md).
-- [TCP-потоки, gRPC/descriptors и HTTPS/2 termination](docs/traffic-analysis.md).
-- [Установка отдельного capture-профиля](docs/packet-capture-deployment.md).
-- [Установка dashboard + executor через Docker Compose](docs/container-deployment.md).
-- [Dashboard, роли и API](docs/dashboard.md).
-- [Релизы, локальные проверки и восстановление](docs/release-pipeline.md).
-- [Git URL, credentials и ограничения источников](docs/git-sources.md).
-- [Контракты данных](docs/contracts.md).
-- [Модель угроз и границы доверия](docs/threat-model.md).
-- [Профиль Compose](docs/compose-profile.md).
-- [Ротация и квоты](docs/storage.md).
-- [Метрики хоста и история за 60 минут](docs/metrics.md).
-- [TCP/HTTP-проверки и ручные подтверждения](docs/health-checks.md).
-- [Очередь, лимиты параллельности и приоритет Rollback](docs/scheduler.md).
-- [Логи и долговечная диагностика операций](docs/logging.md).
-- [Версии секретов и локальное обслуживание](docs/secrets.md).
-- [Обычный экспорт и зашифрованный backup/restore](docs/backup.md).
-- [Хранение и восстановление операций](docs/persistence.md).
-- [Локальный протокол executor и проверка UID](docs/executor-protocol.md).
-- [Тестовый стенд и HTTP-контракт](docs/testing.md).
-- [Пять реальных сервисов SibirCTF](docs/real-services.md).
-- [Состояние этапов и подтверждённые проверки](docs/progress.md).
+- [Нативная установка и обслуживание](docs/native-install.md), [сборка и выпуск архивов](docs/native-release.md).
+- [Docker Compose](https://github.com/jemozing/ctf_admin_panel/blob/main/docs/container-deployment.md), [регистрация сервисов](https://github.com/jemozing/ctf_admin_panel/blob/main/docs/registration.md), [Git-источники](https://github.com/jemozing/ctf_admin_panel/blob/main/docs/git-sources.md).
+- [HTTP Proxy, TLS и WAF](https://github.com/jemozing/ctf_admin_panel/blob/main/docs/http-proxy-install.md), [захват пакетов](https://github.com/jemozing/ctf_admin_panel/blob/main/docs/packet-capture-deployment.md), [TCP-потоки и gRPC](https://github.com/jemozing/ctf_admin_panel/blob/main/docs/traffic-analysis.md).
+- [Резервное копирование](https://github.com/jemozing/ctf_admin_panel/blob/main/docs/backup.md), [хранилище и квоты](https://github.com/jemozing/ctf_admin_panel/blob/main/docs/storage.md).
+- [ТЗ](https://github.com/jemozing/ctf_admin_panel/blob/main/docs/technical-specification.md), [матрица проверок](https://github.com/jemozing/ctf_admin_panel/blob/main/docs/progress.md), [разработка и тесты](https://github.com/jemozing/ctf_admin_panel/blob/main/CONTRIBUTING.md).
