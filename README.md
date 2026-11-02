@@ -67,12 +67,12 @@ Bootstrap подключает только указанные каталоги.
 2. Скачайте artifact **native-linux-packages** и распакуйте zip. Внутри — два Linux-архива и файл `SHA256SUMS`. Опубликованные версионные архивы также будут доступны в [Releases](https://github.com/jemozing/ctf_admin_panel/releases).
 3. Перенесите файлы на сервер. Для обычного x86-64 Linux выберите `amd64`; для ARM64 — `arm64`.
 
-В каталоге со скачанными файлами:
+В каталоге со скачанными файлами замените `VERSION` точной версией из имени нужного архива:
 
 ```bash
 sha256sum --ignore-missing -c SHA256SUMS
-tar -xzf ctf-manager_*_linux_amd64.tar.gz
-cd ctf-manager_*_linux_amd64
+tar -xzf ctf-manager_VERSION_linux_amd64.tar.gz
+cd ctf-manager_VERSION_linux_amd64
 
 python3 install.py --dry-run
 sudo python3 install.py \
@@ -104,6 +104,8 @@ sudo journalctl -u ctfm-executor -u ctfm-dashboard -f
 ```
 
 Dashboard работает от непривилегированного пользователя, executor — с правами управления Docker и разрешёнными каталогами. Конфигурация находится в `/etc/ctf-manager`, состояние — в `/var/lib/ctf-manager`.
+
+Установщик создаёт две службы — dashboard и executor. Бинарники Proxy/WAF и захвата трафика входят в архив, но эти дополнительные модули подключаются отдельно.
 
 Это отдельная установка: переход с работающей Compose-панели требует переноса состояния. [Нативная установка, обновление и дополнительные модули](docs/native-install.md).
 
