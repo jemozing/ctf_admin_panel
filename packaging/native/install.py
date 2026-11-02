@@ -178,6 +178,18 @@ def require_stopped_units(systemctl):
             raise ValueError("stop native services fully before installation or upgrade; transitional states and live PIDs are not accepted")
 
 
+def ensure_port_available(host="127.0.0.1", port=8765):
+    # Match Go's listener restart behavior: a closed dashboard can leave TCP
+    # connections in TIME_WAIT. SO_REUSEADDR permits that safe rebind while an
+    # active listener still conflicts. Deliberately never enable SO_REUSEPORT.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            probe.bind((host, port))
+        except OSError:
+            raise ValueError(f"{host}:{port} is occupied; native setup does not stop other applications") from None
+
+
 def prerequisites(args, bundle):
     if sys.platform != "linux" or os.geteuid() != 0:
         raise ValueError("native installation requires root on Linux; --dry-run is available without installation")
@@ -215,11 +227,7 @@ def prerequisites(args, bundle):
     if command(docker + ["ps", "--filter", "label=com.docker.compose.project=ctf-manager", "--format", "{{.ID}}" ]).stdout.strip():
         raise ValueError("the Compose panel is running; native setup does not migrate or stop it")
     require_stopped_units(commands["systemctl"])
-    with socket.socket() as probe:
-        try:
-            probe.bind(("127.0.0.1", 8765))
-        except OSError:
-            raise ValueError("127.0.0.1:8765 is occupied; native setup does not stop other applications") from None
+    ensure_port_available()
     return commands, docker_root
 
 

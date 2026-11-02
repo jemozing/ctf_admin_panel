@@ -543,6 +543,46 @@
       "vm_touched": false,
       "raw_published": false,
       "anchor": "git-probe-local"
+    },
+    "native_systemd_packaging": {
+      "recorded_on": "2026-11-02",
+      "status": "passed_linux_amd64_systemd_and_dual_arch_build",
+      "archive_platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "static_binaries_per_archive": 5,
+      "checksums_and_manifest": "passed",
+      "local_frontend_build": "passed",
+      "frontend_helper_tests_total": 48,
+      "packaging_tests": 193,
+      "linux_amd64_systemd_lifecycle": "passed",
+      "linux_amd64_runtime_checks": 23,
+      "actual_installer": true,
+      "actual_systemd": true,
+      "admin_and_identity_permissions": "passed",
+      "authenticated_peer_ipc": "passed",
+      "directory_api_and_compose_hint": "passed_without_import",
+      "verified_host_proc_metrics": "passed",
+      "executor_stop_start_with_existing_dashboard": "passed",
+      "upgrade_preserves_config_dashboard_database_and_admin": "passed",
+      "own_services_stopped": true,
+      "ci": {
+        "url": "https://github.com/jemozing/ctf_admin_panel/actions/runs/41495581883",
+        "head_sha": "afd315804271a01e1311135f3352c8b1894ee240",
+        "source_commit": "00a9f79dabfff1876825e661a87e3b20ac6d3df6",
+        "source_dirty": false,
+        "native_build": "passed_both_architectures",
+        "systemd_smoke": "passed",
+        "publish": "skipped"
+      },
+      "linux_arm64_runtime": "not_tested",
+      "docker_queries": "read_only_preflight",
+      "game_containers_created": false,
+      "user_vm_touched": false,
+      "raw_published": false,
+      "anchor": "native-systemd-ci",
+      "target_ctf_acceptance": "open"
     }
   }
 }
