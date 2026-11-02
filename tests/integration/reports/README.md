@@ -8,6 +8,18 @@
 
 ## Границы подтверждений
 
+<a id="native-systemd-ci"></a>
+
+### Нативная поставка и systemd на Linux/amd64 — 2 ноября 2026 года
+
+В [GitHub Actions](https://github.com/jemozing/ctf_admin_panel/actions/runs/41495581883) для HEAD ветки [`afd315804271a01e1311135f3352c8b1894ee240`](https://github.com/jemozing/ctf_admin_panel/commit/afd315804271a01e1311135f3352c8b1894ee240) успешно собраны пакеты Linux amd64/arm64 и пройден настоящий Linux/amd64 systemd lifecycle на свежем ephemeral runner. В Pull Request checkout может использовать merge ref с `main`, поэтому HEAD запуска не подменяет `source.commit` в manifest пакета. Job публикации пропущен: этот прогон не создавал GitHub Release.
+
+Пройдены 23 runtime-проверки: настоящая установка и версия бинарника, непривилегированный Admin bootstrap и вход, UID/capabilities и закрытые файлы, Unix socket/peer IPC, API выбора папок и Compose-подсказка, host-метрики с проверенным procfs-источником. Остановка executor не останавливает dashboard; после возврата executor прежний dashboard снова связывается с ним. Upgrade сохранил конфигурацию, dashboard DB и администратора; вход и обе службы работают после обновления. Собственные службы завершены после smoke.
+
+Локально также пройдены frontend build, 48 helper-тестов и 193 packaging tests. [Матрица N01–N06](../../../docs/progress.md#нативная-поставка-и-сборка-в-actions--2-ноября), [исходник smoke](../native_systemd_smoke.py). Сырой отчёт сохранён локально и не публикуется.
+
+Docker запросы были только read-only preflight, игровые контейнеры не создавались, пользовательская VM не затрагивалась. ARM64 подтверждён cross-build, но его настоящий systemd runtime не проверен. Этот smoke не заменяет Deploy/Rollback игровых сервисов, соревновательную нагрузку или открытую A/P/C-приёмку.
+
 <a id="git-probe-local"></a>
 
 ### Проверка Git и выбор ветки — 2 ноября 2026 года
