@@ -55,6 +55,13 @@ jobs:
       - name: Static analysis and frontend helper tests
         run: make vet frontend-check
 
+      # Match the Compose profile tested with the executor image. Older runner
+      # versions omit explicit create_host_path:false from normalized JSON.
+      - name: Set up compatible Docker Compose
+        uses: docker/setup-compose-action@54042514f505b273907334ae2b9cdbb9a0213c1a # v2
+        with:
+          version: v5.5.0
+
       # These checks use temporary fixtures and mocks. They do not fetch or run
       # SibirCTF services and do not perform the dedicated-host acceptance suite.
       - name: Packaging and fixture checks

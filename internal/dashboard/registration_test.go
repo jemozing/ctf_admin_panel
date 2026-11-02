@@ -30,6 +30,17 @@ func TestRegistrationAdminOnlyCSRFAndServerAssignedActor(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/registration/options":
 			json.NewEncoder(w).Encode(transport.RegistrationOptions{DiscoveryRoots: []string{"/srv/game"}, WorkspaceRoots: []string{"/srv/workspaces"}})
+		case "/v1/registration/directories":
+			var input transport.RegistrationBrowseRequest
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Error(err)
+			}
+			if input.Directory != "/srv/game" {
+				w.WriteHeader(400)
+				w.Write([]byte(`{"code":"invalid_registration","message":"Directory outside approved roots"}`))
+				return
+			}
+			json.NewEncoder(w).Encode(transport.RegistrationDirectoryListing{Directory: input.Directory, Directories: []transport.RegistrationDirectoryEntry{{Name: "game", Path: "/srv/game/game"}}, ComposeFiles: []string{}})
 		case "/v1/registration/proposals":
 			var input transport.RegistrationProposalRequest
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -62,7 +73,7 @@ func TestRegistrationAdminOnlyCSRFAndServerAssignedActor(t *testing.T) {
 		username := string(role)
 		createAccount(t, s, admin, csrf, username, role)
 		cookie, token, _ := loginAs(t, s, username)
-		for _, path := range []string{"options", "inspect", "proposals", "approve"} {
+		for _, path := range []string{"options", "directories", "inspect", "proposals", "approve"} {
 			method := "POST"
 			var body any = map[string]any{}
 			if path == "options" {
@@ -80,6 +91,33 @@ func TestRegistrationAdminOnlyCSRFAndServerAssignedActor(t *testing.T) {
 	}
 	if response := request(t, s, "GET", "/api/registration/options", nil, admin, ""); response.Code != 200 {
 		t.Fatalf("admin discovery: %d %s", response.Code, response.Body.String())
+	}
+	browse := map[string]string{"directory": "/srv/game"}
+	if response := request(t, s, "POST", "/api/registration/directories", browse, nil, ""); response.Code != 401 {
+		t.Fatalf("anonymous directory listing: %d", response.Code)
+	}
+	if response := request(t, s, "POST", "/api/registration/directories", browse, admin, ""); response.Code != 403 {
+		t.Fatalf("directory listing without CSRF: %d", response.Code)
+	}
+	response := request(t, s, "POST", "/api/registration/directories", browse, admin, csrf)
+	var listing transport.RegistrationDirectoryListing
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &listing) != nil || listing.Directory != "/srv/game" || len(listing.Directories) != 1 || listing.Directories[0].Path != "/srv/game/game" {
+		t.Fatalf("admin directory listing: %d %s", response.Code, response.Body.String())
+	}
+	for _, tc := range []struct {
+		method, suffix string
+		body           any
+		status         int
+	}{
+		{"GET", "", nil, 405},
+		{"POST", "?root=/etc", browse, 400},
+		{"POST", "", map[string]string{"directory": "/etc"}, 400},
+		{"POST", "", map[string]string{"directory": "/srv/game", "root": "/etc"}, 400},
+		{"POST", "", map[string]string{"Directory": "/srv/game"}, 400},
+	} {
+		if response := request(t, s, tc.method, "/api/registration/directories"+tc.suffix, tc.body, admin, csrf); response.Code != tc.status {
+			t.Errorf("directory request %s %s: got %d want %d: %s", tc.method, tc.suffix, response.Code, tc.status, response.Body.String())
+		}
 	}
 	input := map[string]any{"service": map[string]string{"id": "draft-test"}}
 	if response := request(t, s, "POST", "/api/registration/proposals", input, admin, ""); response.Code != 403 {

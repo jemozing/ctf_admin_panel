@@ -37,6 +37,17 @@ func (s *Server) registrationRoutes(w http.ResponseWriter, r *http.Request, curr
 		return
 	}
 	switch r.URL.Path {
+	case "/api/registration/directories":
+		var input transport.RegistrationBrowseRequest
+		if !decodeRegistrationInput(w, r, &input) {
+			return
+		}
+		v, err := s.executor.BrowseRegistrationDirectories(r.Context(), input)
+		if err != nil {
+			executorError(w, err)
+			return
+		}
+		writeJSON(w, 200, v)
 	case "/api/registration/inspect":
 		var input transport.RegistrationInspectRequest
 		if !decodeRegistrationInput(w, r, &input) {

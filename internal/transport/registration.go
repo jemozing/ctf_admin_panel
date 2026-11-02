@@ -21,6 +21,20 @@ type RegistrationOptions struct {
 	DiscoveryRoots []string `json:"discovery_roots"`
 	WorkspaceRoots []string `json:"workspace_roots"`
 }
+type RegistrationBrowseRequest struct {
+	Directory string `json:"directory"`
+}
+type RegistrationDirectoryEntry struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+type RegistrationDirectoryListing struct {
+	Directory    string                       `json:"directory"`
+	Parent       string                       `json:"parent,omitempty"`
+	Directories  []RegistrationDirectoryEntry `json:"directories"`
+	ComposeFiles []string                     `json:"compose_files"`
+	Truncated    bool                         `json:"truncated"`
+}
 type RegistrationInspectRequest struct {
 	ProjectDirectory string `json:"project_directory"`
 }
@@ -45,6 +59,7 @@ type RegistrationApproval struct {
 }
 type RegistrationBackend interface {
 	RegistrationOptions(context.Context) (RegistrationOptions, error)
+	BrowseRegistrationDirectories(context.Context, RegistrationBrowseRequest) (RegistrationDirectoryListing, error)
 	InspectRegistration(context.Context, RegistrationInspectRequest) (RegistrationInspection, error)
 	ProposeRegistration(context.Context, RegistrationProposalRequest) (store.Proposal, error)
 	ApproveRegistration(context.Context, RegistrationApproveRequest) (RegistrationApproval, error)
@@ -56,6 +71,10 @@ type RegistrationInputError struct{ Message string }
 func (e *RegistrationInputError) Error() string { return e.Message }
 
 func (s *Server) registrationEndpoint(w http.ResponseWriter, r *http.Request) {
+	if r.URL.RawQuery != "" {
+		writeError(w, 400, "invalid_query", "registration does not accept query parameters")
+		return
+	}
 	b, ok := s.options.Backend.(RegistrationBackend)
 	if !ok {
 		writeError(w, 501, "not_implemented", "registration unavailable")
@@ -85,6 +104,12 @@ func (s *Server) registrationEndpoint(w http.ResponseWriter, r *http.Request) {
 	var v any
 	var err error
 	switch r.URL.Path {
+	case "/v1/registration/directories":
+		var input RegistrationBrowseRequest
+		if !decodeRegistrationBody(w, r, &input) {
+			return
+		}
+		v, err = b.BrowseRegistrationDirectories(r.Context(), input)
 	case "/v1/registration/inspect":
 		var input RegistrationInspectRequest
 		if !decodeRegistrationBody(w, r, &input) {
@@ -263,6 +288,11 @@ func registrationError(w http.ResponseWriter, err error) {
 func (c *Client) RegistrationOptions(ctx context.Context) (RegistrationOptions, error) {
 	var v RegistrationOptions
 	err := c.request(ctx, "GET", "/v1/registration/options", nil, &v)
+	return v, err
+}
+func (c *Client) BrowseRegistrationDirectories(ctx context.Context, input RegistrationBrowseRequest) (RegistrationDirectoryListing, error) {
+	var v RegistrationDirectoryListing
+	err := c.request(ctx, "POST", "/v1/registration/directories", input, &v)
 	return v, err
 }
 func (c *Client) InspectRegistration(ctx context.Context, input RegistrationInspectRequest) (RegistrationInspection, error) {
