@@ -42,6 +42,34 @@ type RegistrationInspection struct {
 	Service  domain.Service `json:"service"`
 	Warnings []string       `json:"warnings"`
 }
+type RegistrationManagedPathsRequest struct {
+	ServiceID    domain.ID `json:"service_id"`
+	CodeBindings []string  `json:"code_bindings"`
+}
+type RegistrationManagedPathsResult struct {
+	ManagedPaths []domain.ManagedPath `json:"managed_paths"`
+}
+
+// RegistrationManagedPathsBackend is optional so older registration adapters
+// keep their existing routes while code-bind classification remains opt-in.
+type RegistrationManagedPathsBackend interface {
+	ResolveRegistrationManagedPaths(context.Context, RegistrationManagedPathsRequest) (RegistrationManagedPathsResult, error)
+}
+
+func ValidateRegistrationManagedPathsRequest(input RegistrationManagedPathsRequest) error {
+	if input.ServiceID.Validate() != nil || len(input.CodeBindings) > 128 {
+		return errors.New("valid draft service and at most 128 code bindings are required")
+	}
+	seen := map[string]bool{}
+	for _, name := range input.CodeBindings {
+		if domain.ValidateComponent(name) != nil || seen[name] {
+			return errors.New("code bindings must be unique discovered storage names")
+		}
+		seen[name] = true
+	}
+	return nil
+}
+
 type RegistrationProposalRequest struct {
 	Service   domain.Service `json:"service"`
 	Initiator domain.ID      `json:"initiator,omitempty"`
@@ -116,6 +144,21 @@ func (s *Server) registrationEndpoint(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		v, err = b.InspectRegistration(r.Context(), input)
+	case "/v1/registration/managed-paths":
+		var input RegistrationManagedPathsRequest
+		if !decodeRegistrationBody(w, r, &input) {
+			return
+		}
+		if ValidateRegistrationManagedPathsRequest(input) != nil {
+			writeError(w, 400, "invalid_request", "valid draft service and unique discovered code bindings are required")
+			return
+		}
+		resolver, available := s.options.Backend.(RegistrationManagedPathsBackend)
+		if !available {
+			writeError(w, 501, "not_implemented", "code-bind classification unavailable")
+			return
+		}
+		v, err = resolver.ResolveRegistrationManagedPaths(r.Context(), input)
 	case "/v1/registration/proposals":
 		var input RegistrationProposalRequest
 		if !decodeRegistrationBody(w, r, &input) {
@@ -298,6 +341,11 @@ func (c *Client) BrowseRegistrationDirectories(ctx context.Context, input Regist
 func (c *Client) InspectRegistration(ctx context.Context, input RegistrationInspectRequest) (RegistrationInspection, error) {
 	var v RegistrationInspection
 	err := c.request(ctx, "POST", "/v1/registration/inspect", input, &v)
+	return v, err
+}
+func (c *Client) ResolveRegistrationManagedPaths(ctx context.Context, input RegistrationManagedPathsRequest) (RegistrationManagedPathsResult, error) {
+	var v RegistrationManagedPathsResult
+	err := c.request(ctx, "POST", "/v1/registration/managed-paths", input, &v)
 	return v, err
 }
 func (c *Client) ProposeRegistration(ctx context.Context, input RegistrationProposalRequest) (store.Proposal, error) {

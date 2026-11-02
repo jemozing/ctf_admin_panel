@@ -25,6 +25,7 @@ func TestRegistrationAdminOnlyCSRFAndServerAssignedActor(t *testing.T) {
 		t.Fatal(err)
 	}
 	actors := make(chan domain.ID, 4)
+	managedRequests := make(chan transport.RegistrationManagedPathsRequest, 4)
 	executor := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -48,6 +49,13 @@ func TestRegistrationAdminOnlyCSRFAndServerAssignedActor(t *testing.T) {
 			}
 			actors <- input.Initiator
 			w.Write([]byte(`{"id":"proposal-test","digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","service":{"id":"draft-test"}}`))
+		case "/v1/registration/managed-paths":
+			var input transport.RegistrationManagedPathsRequest
+			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+				t.Error(err)
+			}
+			managedRequests <- input
+			json.NewEncoder(w).Encode(transport.RegistrationManagedPathsResult{ManagedPaths: []domain.ManagedPath{{Path: "main.py", Kind: domain.ManagedCode}}})
 		case "/v1/registration/approve":
 			var input transport.RegistrationApproveRequest
 			if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -73,7 +81,7 @@ func TestRegistrationAdminOnlyCSRFAndServerAssignedActor(t *testing.T) {
 		username := string(role)
 		createAccount(t, s, admin, csrf, username, role)
 		cookie, token, _ := loginAs(t, s, username)
-		for _, path := range []string{"options", "directories", "inspect", "proposals", "approve"} {
+		for _, path := range []string{"options", "directories", "inspect", "managed-paths", "proposals", "approve"} {
 			method := "POST"
 			var body any = map[string]any{}
 			if path == "options" {
@@ -118,6 +126,43 @@ func TestRegistrationAdminOnlyCSRFAndServerAssignedActor(t *testing.T) {
 		if response := request(t, s, tc.method, "/api/registration/directories"+tc.suffix, tc.body, admin, csrf); response.Code != tc.status {
 			t.Errorf("directory request %s %s: got %d want %d: %s", tc.method, tc.suffix, response.Code, tc.status, response.Body.String())
 		}
+	}
+	managedInput := map[string]any{"service_id": "draft-test", "code_bindings": []string{"mount-web", "mount-cleaner"}}
+	if response := request(t, s, "POST", "/api/registration/managed-paths", managedInput, nil, ""); response.Code != 401 {
+		t.Fatalf("anonymous managed-path resolution: %d", response.Code)
+	}
+	if response := request(t, s, "POST", "/api/registration/managed-paths", managedInput, admin, ""); response.Code != 403 {
+		t.Fatalf("managed-path resolution without CSRF: %d", response.Code)
+	}
+	managedResponse := request(t, s, "POST", "/api/registration/managed-paths", managedInput, admin, csrf)
+	var managedResult transport.RegistrationManagedPathsResult
+	if managedResponse.Code != 200 || json.Unmarshal(managedResponse.Body.Bytes(), &managedResult) != nil || len(managedResult.ManagedPaths) != 1 || managedResult.ManagedPaths[0].Path != "main.py" {
+		t.Fatalf("admin managed-path resolution: %d %s", managedResponse.Code, managedResponse.Body.String())
+	}
+	if input := <-managedRequests; input.ServiceID != "draft-test" || len(input.CodeBindings) != 2 || input.CodeBindings[1] != "mount-cleaner" {
+		t.Fatalf("draft selection changed in proxy: %#v", input)
+	}
+	for _, tc := range []struct {
+		method, suffix string
+		body           any
+		status         int
+	}{
+		{"GET", "", nil, 405},
+		{"POST", "?directory=/etc", managedInput, 400},
+		{"POST", "", map[string]any{"service_id": "draft-test", "code_bindings": []string{"mount-web"}, "directory": "/etc"}, 400},
+		{"POST", "", map[string]any{"service_id": "draft-test", "code_bindings": []string{"mount-web", "mount-web"}}, 400},
+		{"POST", "", map[string]any{"service_id": "draft-test", "code_bindings": []string{"../escape"}}, 400},
+		{"POST", "", map[string]any{"Service_id": "draft-test"}, 400},
+		{"POST", "", json.RawMessage(`{"service_id":"draft-test","service_id":"other-draft"}`), 400},
+	} {
+		if response := request(t, s, tc.method, "/api/registration/managed-paths"+tc.suffix, tc.body, admin, csrf); response.Code != tc.status {
+			t.Errorf("managed-path request %s %s: got %d want %d: %s", tc.method, tc.suffix, response.Code, tc.status, response.Body.String())
+		}
+	}
+	select {
+	case input := <-managedRequests:
+		t.Fatalf("invalid/unauthorized resolution reached executor: %#v", input)
+	default:
 	}
 	input := map[string]any{"service": map[string]string{"id": "draft-test"}}
 	if response := request(t, s, "POST", "/api/registration/proposals", input, admin, ""); response.Code != 403 {

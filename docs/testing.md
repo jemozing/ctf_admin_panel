@@ -2,6 +2,16 @@
 
 Публикуемые результаты собраны в [обезличенной сводке](../tests/integration/reports/README.md) и [машинном summary](../tests/integration/reports/public-summary.json). Исходные отчёты и скриншоты не входят в Git. Команды `--report` ниже создают новые локальные артефакты; наличие такой команды не означает успешной приёмки.
 
+## Регистрация writable bind-кода
+
+```sh
+make frontend frontend-check
+go test -race ./internal/domain ./internal/policy ./internal/executor ./internal/transport ./internal/dashboard
+node tests/integration/writable_bind_browser_smoke.cjs
+```
+
+Browser smoke требует Playwright/Chromium и использует собранный React UI с синтетическим API на loopback. Проверяются оба shared root binds, отдельное согласие, цели обновления, повторный расчёт/ошибки и финальный review. Executor-тесты используют настоящие snapshots, MaterializeBuild и Apply/обратный Apply с остановленным gate, проверяют code add/delete, исключения DB/uploads/.env и файловую provenance root bind при одинаковых images. Это не настоящий Compose Build/Deploy/Rollback; реальный Docker/VM для этих прогонов не используются.
+
 ## Окна действий при HTTP-доступе по сетевому адресу
 
 ```sh

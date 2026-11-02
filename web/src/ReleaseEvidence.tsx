@@ -3,7 +3,7 @@ import {api,label,time} from './api'
 import type {ReleaseEvidence as Evidence} from './api'
 import {Badge,Button,Notice} from './ui'
 const checks:Record<string,string>={policy:'Политика',files:'Файлы / manifest',configuration:'Конфигурация',secrets:'Версии секретов',images:'Точные локальные образы',active_tree:'Drift активных файлов',runtime:'Фактические контейнеры',data:'Игровые данные'}
-const states:Record<string,string>={available:'Доступно',unavailable:'Недоступно',unchanged:'Без изменений',changed:'Есть изменения',unknown:'Неизвестно',confirmation_required:'Нужно подтвердить совместимость',unchanged_by_rollback:'Не откатываются'}
+const states:Record<string,string>={available:'Доступно',unavailable:'Недоступно',unchanged:'Без изменений',changed:'Есть изменения',unknown:'Неизвестно',confirmation_required:'Нужно подтвердить совместимость',unchanged_by_rollback:'Не откатываются',code_bind_loss_accepted:'В кодовых bind допускается потеря данных',confirmation_required_and_code_bind_loss_accepted:'Подтвердите совместимость; в кодовых bind допускается потеря данных'}
 export default function ReleaseEvidenceView({serviceID,releaseID}:{serviceID:string;releaseID:string}){
  const[value,setValue]=useState<Evidence|null>(null),[busy,setBusy]=useState(false),[error,setError]=useState('')
  const refresh=async()=>{setBusy(true);setError('');try{setValue(await api<Evidence>(`/api/services/${serviceID}/releases/${releaseID}/evidence`))}catch(error){setError(error instanceof Error?error.message:'Сведения недоступны')}finally{setBusy(false)}}

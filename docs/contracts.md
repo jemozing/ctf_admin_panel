@@ -83,3 +83,7 @@ Rollback availability вычисляется заново перед остан�
 ## Проверки контрактов
 
 `go test -race ./internal/domain` проверяет разделение source/data, запрет значимого неподдерживаемого storage, конфликтующие регистрации, обход путей/symlink, неизменяемость manifest/release, привязку атрибутов к digest, versioned secrets, запрет ложного success/cancel и слепого продолжения после сбоя, stale health и удержание recovery. Проверки на реальных Docker и файловой системе относятся к последующим этапам и не заменяются этими unit tests.
+
+## Код внутри disposable bind
+
+`DataPath.allow_code_updates` — необязательный boolean, по умолчанию false. Он разрешает пересечение управляемых путей с конкретным writable bind внутри ProjectDirectory только вместе с `significant=false` и `loss_accepted=true`. Компонент должен входить в Targets; свежая policy проверяет также остальные runtime consumers кода. Persistent binds без этого opt-in по-прежнему не пересекаются с managed paths. Флаг не меняет host/source/target identity, правила workspace, symlink/parent guards или конфликты независимых сервисов. Disposable code binds не являются DataReference постоянных хранилищ; release evidence помечает их `code_bind_loss_accepted`, с отдельной отметкой при одновременном наличии сохраняемых данных.

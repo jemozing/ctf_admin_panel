@@ -59,6 +59,21 @@ func (s *Server) registrationRoutes(w http.ResponseWriter, r *http.Request, curr
 			return
 		}
 		writeJSON(w, 200, v)
+	case "/api/registration/managed-paths":
+		var input transport.RegistrationManagedPathsRequest
+		if !decodeRegistrationInput(w, r, &input) {
+			return
+		}
+		if transport.ValidateRegistrationManagedPathsRequest(input) != nil {
+			apiError(w, 400, "invalid_request", "Choose a valid draft service and unique discovered code bindings")
+			return
+		}
+		v, err := s.executor.ResolveRegistrationManagedPaths(r.Context(), input)
+		if err != nil {
+			executorError(w, err)
+			return
+		}
+		writeJSON(w, 200, v)
 	case "/api/registration/proposals":
 		// Initiator is deliberately absent from the browser DTO.
 		var input struct {

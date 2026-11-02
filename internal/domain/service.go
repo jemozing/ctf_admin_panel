@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"path"
+	"strings"
 )
 
 type ManagedKind string
@@ -33,14 +34,17 @@ const (
 // Source is an absolute host path for bind storage and the actual Docker volume
 // name for volumes. Target is the absolute path inside Component's container.
 type DataPath struct {
-	Name           string      `json:"name"`
-	Kind           StorageKind `json:"kind"`
-	Source         string      `json:"source,omitempty"`
-	Target         string      `json:"target"`
-	Component      string      `json:"component"`
-	Significant    bool        `json:"significant"`
-	LossAccepted   bool        `json:"loss_accepted"`
-	SharedResource ID          `json:"shared_resource,omitempty"`
+	Name         string      `json:"name"`
+	Kind         StorageKind `json:"kind"`
+	Source       string      `json:"source,omitempty"`
+	Target       string      `json:"target"`
+	Component    string      `json:"component"`
+	Significant  bool        `json:"significant"`
+	LossAccepted bool        `json:"loss_accepted"`
+	// Explicitly permits managed code inside this disposable bind. It never
+	// authorizes source-workspace overlap or access outside the active project.
+	AllowCodeUpdates bool `json:"allow_code_updates,omitempty"`
+	SharedResource   ID   `json:"shared_resource,omitempty"`
 }
 
 type ComponentRole string
@@ -191,6 +195,17 @@ func (s Service) Validate() error {
 		if data.Significant && data.LossAccepted {
 			return fmt.Errorf("significant data %q cannot be declared disposable", data.Name)
 		}
+		if data.AllowCodeUpdates {
+			if data.Kind != StorageBind || data.Significant || !data.LossAccepted {
+				return fmt.Errorf("storage %q requires a disposable bind with explicit loss acceptance for code updates", data.Name)
+			}
+			if !seenTargets[data.Component] {
+				return fmt.Errorf("code bind %q requires its component %q to be an update target", data.Name, data.Component)
+			}
+			if data.Source != s.ProjectDirectory && !strings.HasPrefix(data.Source, s.ProjectDirectory+"/") {
+				return fmt.Errorf("code bind %q must remain inside the active project", data.Name)
+			}
+		}
 		switch data.Kind {
 		case StorageBind:
 			if err := ValidateAbsolutePath(data.Source); err != nil {
@@ -201,7 +216,7 @@ func (s Service) Validate() error {
 			}
 			for _, managed := range s.ManagedPaths {
 				active := path.Join(s.ProjectDirectory, managed.Path)
-				if PathsOverlap(active, data.Source) {
+				if PathsOverlap(active, data.Source) && !data.AllowCodeUpdates {
 					return fmt.Errorf("managed path overlaps persistent bind %q", data.Name)
 				}
 			}
