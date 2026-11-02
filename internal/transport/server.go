@@ -301,6 +301,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(r.URL.Path, "/v1/operations/") && strings.HasSuffix(r.URL.Path, "/cancel"):
 		s.cancelEndpoint(w, r)
 		return
+	case r.URL.Path == "/v1/git/probe":
+		s.gitProbeEndpoint(w, r)
+		return
 	case strings.HasPrefix(r.URL.Path, "/v1/registration/"):
 		s.registrationEndpoint(w, r)
 		return

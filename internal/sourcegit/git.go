@@ -12,7 +12,6 @@ import (
 	"errors"
 	"io"
 	"io/fs"
-	"net"
 	"net/netip"
 	"net/url"
 	"os"
@@ -134,13 +133,8 @@ func (r runner) command(ctx context.Context, args ...string) *exec.Cmd {
 }
 
 func fetch(parent context.Context, c Config, token []byte, local bool) (_ *Tree, resultErr error) {
-	if len(token) > 4096 || bytes.ContainsAny(token, "\x00\r\n") {
-		return nil, errors.New("invalid Git token")
-	}
-	for _, ch := range token {
-		if ch < 0x21 || ch > 0x7e {
-			return nil, errors.New("Git token must use printable ASCII")
-		}
+	if err := validateGitToken(token); err != nil {
+		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(parent, Timeout)
 	defer cancel()
@@ -169,41 +163,13 @@ func fetch(parent context.Context, c Config, token []byte, local bool) (_ *Tree,
 	}
 	env := gitEnvironment(repo, c, token)
 	r := runner{binary: binary, root: root, repo: repo, env: env, local: local}
-	version, err := r.command(ctx, "version").Output()
-	match := versionPattern.FindSubmatch(version)
-	if err != nil || len(match) != 3 {
-		return nil, errors.New("cannot verify Git version")
-	}
-	major, _ := strconv.Atoi(string(match[1]))
-	minor, _ := strconv.Atoi(string(match[2]))
-	if major < 2 || major == 2 && minor < 40 {
-		return nil, errors.New("Git 2.40 or newer is required for pinned HTTPS resolution")
+	if err := verifyGitVersion(ctx, r); err != nil {
+		return nil, err
 	}
 	if !local {
-		u, _ := url.Parse(c.URL)
-		addresses, err := net.DefaultResolver.LookupNetIP(ctx, "ip", u.Hostname())
-		if err != nil || len(addresses) == 0 || len(addresses) > 16 {
-			return nil, errors.New("Git host cannot be resolved")
-		}
-		for _, ip := range addresses {
-			if !publicAddress(ip) {
-				return nil, errors.New("Git host resolves to a restricted network")
-			}
-		}
-		port := u.Port()
-		if port == "" {
-			port = "443"
-		}
-		if _, err := netip.ParseAddr(u.Hostname()); err != nil {
-			var pinned []string
-			for _, address := range addresses {
-				ip := address.Unmap().String()
-				if address.Is6() {
-					ip = "[" + ip + "]"
-				}
-				pinned = append(pinned, ip)
-			}
-			r.resolution = u.Hostname() + ":" + port + ":" + strings.Join(pinned, ",")
+		r.resolution, err = pinnedGitResolution(ctx, c.URL)
+		if err != nil {
+			return nil, err
 		}
 	}
 	// The Docker /tmp tmpfs provides a hard outer bound; this early check also
@@ -426,15 +392,17 @@ func exportBlobs(ctx context.Context, r runner, destination string, entries []en
 }
 
 type limitedBuffer struct {
-	bytes.Buffer
-	limit int
+	buffer bytes.Buffer
+	limit  int
 }
 
+func (b *limitedBuffer) Bytes() []byte { return b.buffer.Bytes() }
+
 func (b *limitedBuffer) Write(p []byte) (int, error) {
-	if len(p) > b.limit-b.Len() {
+	if len(p) > b.limit-b.buffer.Len() {
 		return 0, errors.New("Git output limit exceeded")
 	}
-	return b.Buffer.Write(p)
+	return b.buffer.Write(p)
 }
 
 // CleanSubdirectory applies the UI default without accepting path aliases.

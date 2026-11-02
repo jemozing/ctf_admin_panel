@@ -8,6 +8,16 @@
 
 ## Границы подтверждений
 
+<a id="git-probe-local"></a>
+
+### Проверка Git и выбор ветки — 2 ноября 2026 года
+
+Реализована read-only проверка введённых URL/credentials и опубликованного ref. Пройдены полный Go race-прогон и финальные sourcegit race tests, vet затронутых пакетов, frontend/manager build, 48 frontend helpers и 157 packaging tests. В sourcegit добавлены 12 тестовых функций с реальным локальным TLS Git transport: refs, ошибки auth/TLS, redirect, cancellation, limits и отсутствие objects/credentials leaks. Executor scope/readonly покрыт 6 функциями; transport/dashboard проверяют Admin, CSRF, strict JSON и удержание приватных refs после отзыва сессии/роли или сбоя аудита.
+
+UI прошёл 31 Chromium check и 8 process checks через настоящий dashboard с синтетическим Unix executor, без browser API interception: выбор ветки, разные статусы ref, ошибки доступа/retry и поздние ответы после редактирования/закрытия. Это не live GitHub. Production probe публичного GitHub был отклонён до соединения из-за restricted DNS; успешный live GitHub/GitLab check не заявляется. [Повторение](../../../docs/testing.md#проверка-git-и-выбор-ветки).
+
+VM, Docker и игровые сервисы не использовались. Сырые отчёты остаются локально; общая Linux/CTF приёмка открыта.
+
 <a id="directory-picker-local"></a>
 
 ### GUI выбора папки — 2 ноября 2026 года

@@ -524,19 +524,25 @@
       "go_race": "all_internal_and_commands_passed",
       "go_vet": "affected_executor_transport_dashboard_passed"
     },
-    "native_systemd_packaging": {
+    "git_source_probe": {
       "recorded_on": "2026-11-02",
-      "status": "local_cross_build_and_dry_run_passed",
-      "linux_architectures": [
-        "amd64",
-        "arm64"
-      ],
-      "binaries_per_archive": 5,
-      "installer_dry_runs": 2,
-      "linux_amd64_systemd_lifecycle": "ci_pending",
-      "arm64_runtime": "not_tested",
-      "user_vm_touched": false,
-      "ctf_acceptance": "unchanged_open"
+      "status": "passed_locally_with_external_network_limit",
+      "sourcegit_new_test_functions": 12,
+      "executor_new_test_functions": 6,
+      "go_race": "all_internal_and_commands_passed_then_final_sourcegit_passed",
+      "go_vet": "affected_sourcegit_executor_transport_dashboard_passed",
+      "frontend_helper_tests_total": 48,
+      "packaging_tests": 157,
+      "browser_checks": 31,
+      "process_checks": 8,
+      "actual_dashboard": true,
+      "executor_protocol_fixture": true,
+      "actual_git_transport_in_package_tests": true,
+      "live_github_probe": "rejected_before_connection_restricted_dns",
+      "docker_used": false,
+      "vm_touched": false,
+      "raw_published": false,
+      "anchor": "git-probe-local"
     }
   }
 }

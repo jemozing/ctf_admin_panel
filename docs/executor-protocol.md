@@ -1,5 +1,7 @@
 # Локальный протокол executor v1
 
+`POST /v1/git/probe` выполняет read-only проверку Git-источника. Тело: `{"source":{"url":"https://github.com/example/service.git","ref":"HEAD"},"service_id":"optional-existing-service"}`. `source` поддерживает те же username/token/clear_credentials/subdirectory, что настройка; credentials не сохраняются. Ответ содержит `branches: [{name,ref,commit}]`, `default_branch`, `selected_ref`, необязательный `resolved_commit`, `ref_status` (`available`, `missing`, `unverified`, `ambiguous`), `truncated` и `checked_at`. Название `resolved_commit` означает объявленный сервером Git OID; тип объекта/подкаталог подтверждает Fetch. Запрос — строгий JSON до 16 КиБ, ответ ограничен 256 КиБ; query запрещены. Только этот RPC имеет увеличенный client budget (header 25 с / total 28 с) для 20-секундной сетевой проверки с завершением Git-процесса; обычные RPC сохраняют прежние таймауты. Фиксированный Unix dialer, запрет redirects и peer UID сохраняются.
+
 `internal/transport` предоставляет HTTP/1.1 поверх одного Unix stream socket. TCP listener и сетевой fallback отсутствуют. `NewClient` всегда соединяется с заранее настроенным socket и не следует redirects; proxy environment не изменяет маршрут. Публичный web API к этому протоколу напрямую не выставляется.
 
 Production transport требует Linux. На macOS запуск разрешается только с явным `Development: true` и предназначен для разработки. Linux использует `SO_PEERCRED`, macOS — `LOCAL_PEERCRED`. HTTP identity и заголовки не заменяют peer UID.
