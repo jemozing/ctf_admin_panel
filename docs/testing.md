@@ -2,6 +2,17 @@
 
 Публикуемые результаты собраны в [обезличенной сводке](../tests/integration/reports/README.md) и [машинном summary](../tests/integration/reports/public-summary.json). Исходные отчёты и скриншоты не входят в Git. Команды `--report` ниже создают новые локальные артефакты; наличие такой команды не означает успешной приёмки.
 
+## Окна действий при HTTP-доступе по сетевому адресу
+
+```sh
+make frontend frontend-check
+node tests/integration/action_dialog_http_smoke.cjs
+```
+
+Для browser smoke нужны установленный Playwright и Chromium; скрипт также умеет использовать локальный кэш среды Codex и ничего не скачивает. Сервер слушает только loopback, а Chromium открывает HTTP-имя `ctfm-dialog.test`, явно сопоставленное с loopback. Так проверяется настоящий insecure context: `randomUUID` отсутствует, `getRandomValues` доступен. Проверка через `localhost` этот дефект не воспроизводит.
+
+Используется собранный frontend и синтетический HTTP API: открытие «Подготовить»/«Применить», отдельное подтверждение, смена релиза, сохранение ключа между preview/submit, новый ключ после закрытия и видимая ошибка preview. Это UI-регрессия; настоящие executor, Deploy/Rollback, Docker и VM в ней не используются.
+
 ## GUI выбора папки без Docker
 
 ```sh

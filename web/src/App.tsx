@@ -4,6 +4,7 @@ import {Activity,ArrowLeft,ArrowUpRight,Archive,Boxes,ChevronRight,FileText,GitB
 import {api,APIError,bytes,label,post,setCSRF,short,time,getDisplayTimeZone,setDisplayTimeZone} from './api'
 import type {Action,Audit,Details,Operation,OperationEvent,Preview,Role,Service,Session,Submit,User} from './api'
 import {Badge,Button,Empty,Modal,Notice} from './ui'
+import {createOperationKey} from './operationKey'
 import MetricsView,{HostMetricsView} from './Metrics'
 import RegistrationDialog from './Registration'
 import GitSourceView from './GitSource'
@@ -173,8 +174,8 @@ function Configuration({details}:{details:Details}){return <div className="panel
 function ActionDialog({action,details,user,recoveryOperation,snapshotID,onClose,onAccepted}:{action:Action;details:Details;user:User;recoveryOperation?:string;snapshotID?:string;onClose:()=>void;onAccepted:(operation:Operation)=>void}){
   const options=(details.releases||[]).filter(value=>action!=='rollback'||value.id!==details.current_release_id).sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at))
   const [release,setRelease]=useState(options[0]?.id||''),[preview,setPreview]=useState<Preview|null>(null),[busy,setBusy]=useState(false),[loading,setLoading]=useState(false),[error,setError]=useState(''),[confirmData,setConfirmData]=useState(false),[acceptDrift,setAcceptDrift]=useState(false)
-  const key=useRef(crypto.randomUUID())
-  const request:Submit={service_id:details.service.id,action,idempotency_key:key.current,...(action==='build'?{candidate_id:details.candidate_id}:{}),...(action==='restore_snapshot'?{snapshot_id:snapshotID}:{}),...(acceptDrift?{accept_file_drift:true}:{}),...(['deploy','rollback'].includes(action)?{release_id:release}:{}),...(action==='recover'?{recovery_operation_id:recoveryOperation}:{})}
+  const [key]=useState(createOperationKey)
+  const request:Submit={service_id:details.service.id,action,idempotency_key:key,...(action==='build'?{candidate_id:details.candidate_id}:{}),...(action==='restore_snapshot'?{snapshot_id:snapshotID}:{}),...(acceptDrift?{accept_file_drift:true}:{}),...(['deploy','rollback'].includes(action)?{release_id:release}:{}),...(action==='recover'?{recovery_operation_id:recoveryOperation}:{})}
   const requestString=JSON.stringify(request)
   useEffect(()=>{let active=true;setPreview(null);setError('');setConfirmData(false);setLoading(true);post<Preview>('/api/preview',JSON.parse(requestString)).then(result=>{if(active)setPreview(result)}).catch(error=>{if(active)setError(errorMessage(error))}).finally(()=>{if(active)setLoading(false)});return()=>{active=false}},[requestString])
   const submit=async()=>{if(!preview)return;setBusy(true);setError('');try{onAccepted(await post<Operation>('/api/operations',{...request,plan_digest:preview.plan_digest,confirm_data_compatibility:confirmData}))}catch(error){setError(errorMessage(error));if(error instanceof APIError&&error.status===409)setPreview(null)}finally{setBusy(false)}}
