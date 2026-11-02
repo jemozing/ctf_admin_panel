@@ -140,6 +140,20 @@ class NativeInstallTests(unittest.TestCase):
             INSTALL.validated_roots(["/srv/games"], ["/srv/games/work"])
         self.assertEqual(INSTALL.validated_roots([], []), ([Path("/srv/game-services")], [Path("/srv/ctf-workspaces")]))
 
+    def test_untrusted_parent_diagnostic_identifies_path_uid_and_mode_without_repair(self):
+        inspected = []
+        def info(path):
+            inspected.append(str(path))
+            if path == Path("/srv/shared"):
+                return SimpleNamespace(st_uid=1001, st_mode=stat.S_IFDIR | 0o777)
+            return SimpleNamespace(st_uid=0, st_mode=stat.S_IFDIR | 0o755)
+        with patch.object(INSTALL, "no_symlinks"), patch.object(Path, "lstat", info), \
+                patch.object(INSTALL.os, "chmod", side_effect=AssertionError("must not repair host permissions")), \
+                patch.object(INSTALL.os, "chown", side_effect=AssertionError("must not repair host ownership")), \
+                self.assertRaisesRegex(ValueError, r"untrusted installation parent /srv/shared \(uid=1001, mode=0777\)"):
+            INSTALL.stable_parents(Path("/srv/shared/services"))
+        self.assertEqual(inspected, ["/", "/srv", "/srv/shared"])
+
     def test_units_keep_ipc_across_executor_stop_and_isolate_dashboard(self):
         executor = (ROOT / "packaging/native/systemd/ctfm-executor.service").read_text()
         dashboard = (ROOT / "packaging/native/systemd/ctfm-dashboard.service").read_text()

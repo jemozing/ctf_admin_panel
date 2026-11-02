@@ -91,7 +91,7 @@ def stable_parents(path):
         except FileNotFoundError:
             continue
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or stat.S_IMODE(info.st_mode) & 0o022:
-            raise ValueError("installation parents and approved roots must be root-owned directories without group/world write")
+            raise ValueError(f"untrusted installation parent {item} (uid={info.st_uid}, mode={stat.S_IMODE(info.st_mode):04o}); expected a root-owned directory without group/world write")
 
 
 def bundle_file(source, relative, limit=MAX_FILE_BYTES):
