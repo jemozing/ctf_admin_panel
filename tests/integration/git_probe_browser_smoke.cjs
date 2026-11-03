@@ -80,10 +80,12 @@ async function main() {
   await dialog.getByRole('checkbox', {name: /Подключить GitHub/}).check();
   const url = dialog.getByLabel(/^Git URL/);
   const ref = dialog.getByLabel('Ветка, тег или commit', {exact: true});
+  const subdirectory = dialog.getByRole('textbox', {name: /^Подкаталог сервиса/});
   const token = dialog.getByLabel(/^Токен ·/);
   const probe = dialog.getByRole('region', {name: 'Проверка Git-репозитория', exact: true});
   const button = probe.getByRole('button', {name: 'Проверить подключение', exact: true});
   const branch = probe.getByLabel(/^Выбрать ветку/);
+  const directories = probe.getByRole('region', {name: 'Папки Git-репозитория', exact: true});
   const good = probe.getByText('Подключение и версия проверены', {exact: true});
   const warning = probe.getByText('Репозиторий доступен · уточните версию', {exact: true});
   const probeResponse = () => page.waitForResponse(response => new URL(response.url()).pathname === '/api/git/probe' && response.request().method() === 'POST');
@@ -109,9 +111,28 @@ async function main() {
   await good.waitFor();
   check('default_branch_and_git_sha_displayed', await probe.getByText('main', {exact: true}).count() > 0 && await probe.getByText('a'.repeat(40), {exact: true}).isVisible());
   check('advertised_branch_choices_available', await branch.locator('option[value="refs/heads/main"]').count() === 1 && await branch.locator('option[value="refs/heads/feature/next"]').count() === 1);
+  result.phase = 'choose_git_directory';
+  await directories.getByRole('button', {name: 'Открыть папку vuln-service', exact: true}).click();
+  await directories.getByRole('button', {name: 'Выбрать эту папку', exact: true}).click();
+  check('directory_selection_fills_relative_path', await subdirectory.inputValue() === 'vuln-service');
+  await directories.getByRole('button', {name: 'Использовать корень', exact: true}).click();
+  check('root_selection_clears_relative_path', await subdirectory.inputValue() === '');
+  await directories.getByRole('button', {name: 'Открыть папку vuln-service', exact: true}).click();
+  const previousDirectoryRequests = (await fixtureStatus()).delayed_directories;
+  await directories.getByRole('button', {name: 'Открыть папку web', exact: true}).click();
+  const deadline = Date.now() + 2000;
+  while ((await fixtureStatus()).delayed_directories === previousDirectoryRequests) {
+    if (Date.now() >= deadline) throw new Error('delayed_directory_handler_not_entered');
+    await page.waitForTimeout(20);
+  }
   await branch.selectOption('refs/heads/feature/next');
   check('branch_selection_sets_full_ref_and_invalidates_old_check', await ref.inputValue() === 'refs/heads/feature/next' && await good.count() === 0);
   check('branch_choices_survive_interactive_selection', await branch.isVisible());
+  await directories.getByRole('button', {name: 'Открыть папку alternate', exact: true}).waitFor();
+  await page.waitForTimeout(1100);
+  check('new_branch_folders_replace_an_in_flight_old_directory',
+    await directories.getByRole('button', {name: 'Открыть папку alternate', exact: true}).isVisible() &&
+    await directories.getByText('vuln-service/web', {exact: true}).count() === 0);
   result.phase = 'chosen_branch';
   await submit(200);
   await good.waitFor();

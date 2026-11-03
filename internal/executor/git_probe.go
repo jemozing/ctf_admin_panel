@@ -9,29 +9,54 @@ import (
 	"github.com/ctf-service-manager/ctf-service-manager/internal/transport"
 )
 
-// Probes do not enter the durable operation queue. A small process-wide gate
-// bounds their network subprocesses independently of service mutation locks.
+// Interactive Git reads share a process-wide limit on network subprocesses.
 var gitProbeSlots = make(chan struct{}, 2)
+
+func acquireGitReadSlot(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case gitProbeSlots <- struct{}{}:
+		return nil
+	default:
+		return store.ErrBusy
+	}
+}
 
 func (m *Manager) ProbeGitSource(ctx context.Context, input transport.GitProbeRequest) (transport.GitProbeResult, error) {
 	if err := input.Validate(); err != nil {
 		return transport.GitProbeResult{}, err
 	}
-	if err := ctx.Err(); err != nil {
+	if err := acquireGitReadSlot(ctx); err != nil {
 		return transport.GitProbeResult{}, err
 	}
-	select {
-	case gitProbeSlots <- struct{}{}:
-		defer func() { <-gitProbeSlots }()
-	default:
-		return transport.GitProbeResult{}, store.ErrBusy
-	}
+	defer func() { <-gitProbeSlots }()
 	configuration, token, err := m.prepareGitProbe(ctx, input)
 	if err != nil {
 		return transport.GitProbeResult{}, err
 	}
 	defer clear(token)
 	return sourcegit.Probe(ctx, configuration, token)
+}
+
+func (m *Manager) BrowseGitDirectories(ctx context.Context, input transport.GitDirectoriesRequest) (transport.GitDirectoryListing, error) {
+	if err := input.Validate(); err != nil {
+		return transport.GitDirectoryListing{}, err
+	}
+	if err := acquireGitReadSlot(ctx); err != nil {
+		return transport.GitDirectoryListing{}, err
+	}
+	defer func() { <-gitProbeSlots }()
+	input.Source.Subdirectory = ""
+	configuration, token, err := m.prepareGitProbe(ctx, transport.GitProbeRequest{
+		Source: input.Source, ServiceID: input.ServiceID,
+	})
+	if err != nil {
+		return transport.GitDirectoryListing{}, err
+	}
+	defer clear(token)
+	return sourcegit.BrowseDirectories(ctx, configuration, token, input.Directory)
 }
 
 // prepareGitProbe snapshots only the already-saved credential reference, then

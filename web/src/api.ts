@@ -17,6 +17,7 @@ export type RegistrationApproval = {service:Service;initialized:boolean;initiali
 export type GitSource = {configured:boolean;url?:string;ref?:string;subdirectory?:string;username?:string;has_credentials:boolean;revision:number;last_fetch?:{commit:string;snapshot_id:string;at:string}}
 export type GitSourceInput = {url:string;ref:string;subdirectory?:string;username?:string;token?:string;clear_credentials?:boolean}
 export type GitProbeResult = {branches:{name:string;ref:string;commit:string}[];default_branch?:string;selected_ref:string;resolved_commit?:string;ref_status:'available'|'missing'|'unverified'|'ambiguous';truncated:boolean;checked_at:string}
+export type GitDirectoryListing = {directory:string;parent?:string;directories:{name:string;path:string}[];truncated:boolean}
 export type Container = {id:string;name:string;component:string;image_id:string;state:string;health:string;ports:string[]}
 export type GitProvenance = {url:string;ref:string;subdirectory?:string;commit:string;source_revision:number}
 export type Release = {id:string;service_id:string;created_at:string;author:string;source:string;git_source?:GitProvenance;snapshot_id:string;tree_digest:string;policy_revision:number;images:{component:string;image_id:string;retention_tag:string}[]}

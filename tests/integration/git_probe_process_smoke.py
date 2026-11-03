@@ -43,7 +43,8 @@ def run(args):
               "checks": [], "passed": False}
     processes, logs = [], []
     server = server_thread = None
-    tracking = {"probe_requests": 0, "registration_inspects": 0, "write_requests": 0,
+    tracking = {"probe_requests": 0, "directory_requests": 0, "delayed_directories": 0,
+                "registration_inspects": 0, "write_requests": 0,
                 "default_ref_seen": False, "full_branch_seen": False, "valid_token_seen": False,
                 "invalid_token_rejected": False, "delayed_probes": 0, "registration_scope_only": True}
     lock = threading.Lock()
@@ -94,7 +95,7 @@ def run(args):
         def do_GET(self):
             if self.path == "/v1/fixture/status":
                 with lock:
-                    self.reply(200, {"delayed_probes": tracking["delayed_probes"]})
+                    self.reply(200, {key: tracking[key] for key in ("delayed_probes", "delayed_directories")})
             elif self.path == "/v1/health":
                 self.reply(200, {"status": "ok", "schema_version": 1})
             elif self.path in ("/v1/services", "/v1/operations"):
@@ -128,6 +129,29 @@ def run(args):
                                            "data_paths": [], "targets": ["app"],
                                            "containers": [{"component": "app", "role": "application", "id": "a" * 64,
                                                            "image_id": "sha256:" + "b" * 64}]}, "warnings": []})
+                return
+            if self.path == "/v1/git/directories":
+                source = data.get("source", {})
+                directory = data.get("directory")
+                alternate = source.get("ref") == "refs/heads/feature/next"
+                paths = {"": ["alternate"] if alternate else ["vuln-service"],
+                         "vuln-service": ["web"], "vuln-service/web": []}
+                with lock:
+                    tracking["directory_requests"] += 1
+                    tracking["registration_scope_only"] &= not bool(data.get("service_id"))
+                    if directory == "vuln-service/web":
+                        tracking["delayed_directories"] += 1
+                if directory == "vuln-service/web":
+                    time.sleep(1)
+                if directory not in paths or "subdirectory" in source:
+                    self.reply(400, {"code": "invalid_request", "message": "Invalid fixture path"})
+                    return
+                listing = {"directory": directory, "truncated": False, "directories": [
+                    {"name": name, "path": f"{directory}/{name}" if directory else name}
+                    for name in paths[directory]]}
+                if directory:
+                    listing["parent"] = directory.rpartition("/")[0]
+                self.reply(200, listing)
                 return
             if self.path != "/v1/git/probe":
                 with lock:

@@ -178,4 +178,8 @@ func TestGitProbeConcurrencyGateRejectsBeforeCredentialRead(t *testing.T) {
 	if _, err := m.ProbeGitSource(t.Context(), input); !errors.Is(err, store.ErrBusy) {
 		t.Fatal("saturated probe gate did not reject before reading credentials")
 	}
+	browse := transport.GitDirectoriesRequest{ServiceID: input.ServiceID, Source: input.Source}
+	if _, err := m.BrowseGitDirectories(t.Context(), browse); !errors.Is(err, store.ErrBusy) {
+		t.Fatal("directory browsing did not share the probe gate")
+	}
 }
