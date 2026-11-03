@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {proxyCutoverApplicationEvidence,proxyCutoverGroupEvidence,proxyCutoverGroupRequest,proxyCutoverGroupTargets,proxyCutoverUpdateSettings,proxyCutoverListener,proxyCutoverRoutes,proxyListenAddress,proxyRouteChanges,proxyRouteID,proxyRouteInput,trafficBytes,trafficHex,trafficQuery} from './proxyTypes.ts'
+import {proxyCutoverApplicationEvidence,proxyCutoverGroupEvidence,proxyCutoverGroupRequest,proxyCutoverGroupTargets,proxyCutoverUpdateSettings,proxyCutoverListener,proxyCutoverRoutes,proxyListenAddress,proxyLoopbackListener,proxyRouteChanges,proxyRouteID,proxyRouteInput,trafficBytes,trafficHex,trafficQuery} from './proxyTypes.ts'
 import type {ProxyCutoverContainer,ProxyCutoverDraftTarget,ProxyCutoverTargets,ProxyRoute,TrafficBody,TrafficFilters} from './proxyTypes.ts'
 
 const filters:TrafficFilters={services:[],route:'',from:'',until:'',ip:'',method:'',status:'',url:'',waf:''}
@@ -42,11 +42,22 @@ test('body display bounds decoded memory and handles corrupt base64 without thro
 })
 
 test('editing a route selects its registered container port rather than its published host port',()=>{
-  const input=proxyRouteInput(route,[{service_id:'game',service_name:'Game',component:'web',upstream_port:4444,upstream_address:'http://127.0.0.1:18011',private_binding:true}])
-  assert.equal(input.upstream_port,4444)
-  assert.equal('upstream' in input,false)
+  for(const private_binding of [true,false]){
+    const input=proxyRouteInput(route,[{service_id:'game',service_name:'Game',component:'web',upstream_port:4444,upstream_address:'http://127.0.0.1:18011',private_binding}])
+    assert.equal(input.upstream_port,4444)
+    assert.equal('upstream' in input,false)
+  }
   assert.equal(proxyRouteInput(route,[]).upstream_port,0)
   assert.equal(proxyListenAddress('::1',18081),'[::1]:18081')
+})
+
+test('direct publication observation requires a literal loopback listener',()=>{
+  for(const address of ['127.0.0.1:19081','127.1.2.255:19081','[::1]:19081','[::ffff:127.1.2.3]:19081']){
+    assert.equal(proxyLoopbackListener(address),true,address)
+  }
+  for(const address of ['localhost:19081','127.1:19081','127.0.0.256:19081','127.00.0.1:19081','0.0.0.0:19081','[::]:19081','[::ffff:192.0.2.1]:19081','[::1]:65536','[::1]:0']){
+    assert.equal(proxyLoopbackListener(address),false,address)
+  }
 })
 
 test('editing HTTPS preserves the exact profile and immutable certificate reference',()=>{

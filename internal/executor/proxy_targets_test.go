@@ -33,7 +33,7 @@ func TestProxyCandidatesUseOnlyApprovedPrivateApplicationPorts(t *testing.T) {
 		{Component: "unknown", State: "running", Ports: []string{"127.0.0.1:18013->80/tcp"}},
 		{Component: "public", State: "running", Ports: []string{"127.0.0.1:18014->80/tcp", "0.0.0.0:18015->80/tcp"}},
 	}
-	v := proxyCandidateTargets(s, actual)
+	v := proxyCandidateTargets(s, actual, false, nil)
 	if len(v) != 1 || v[0].Component != "web" || v[0].UpstreamPort != 4444 || v[0].UpstreamAddress != "http://127.0.0.1:18011" || !v[0].PrivateBinding {
 		t.Fatalf("unapproved, public or ambiguous target offered: %#v", v)
 	}

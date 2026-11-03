@@ -15,6 +15,18 @@ export type ProxyStatus = {configured:boolean;available:boolean;desired_revision
 export type ProxyStatusEnvelope = {configured:boolean;desired_revision:number;applied_revision:number;proxy:{available:boolean;desired_revision:number;applied_revision:number;routes:number;waf_degraded:boolean;last_error?:string;collector_epoch?:string;counters?:Record<string,number>};recorder:TrafficStatus;error?:string}
 export function proxyStatusView(value:ProxyStatusEnvelope):ProxyStatus{return {...value.proxy,configured:value.configured,desired_revision:value.desired_revision,applied_revision:value.applied_revision,error:value.error,recorder_available:value.recorder?.available}}
 export function proxyListenAddress(ip:string,port:number){return `${ip.includes(':')&&!ip.startsWith('[')?'['+ip+']':ip}:${port}`}
+export function proxyLoopbackIP(value:string):boolean{
+  if(/^127(?:\.\d{1,3}){3}$/.test(value))return value.split('.').every(part=>String(Number(part))===part&&Number(part)<=255)
+  if(!value.includes(':')||!/^[0-9a-f:.]+$/i.test(value))return false
+  try{
+    const canonical=new URL(`http://[${value}]/`).hostname
+    return canonical==='[::1]'||/^\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\]$/.test(canonical)
+  }catch{return false}
+}
+export function proxyLoopbackListener(value:string):boolean{
+  const match=/^(?:\[([^\]]+)\]|([^:]+)):([1-9]\d{0,4})$/.exec(value)
+  return !!match&&Number(match[3])<=65535&&proxyLoopbackIP(match[1]??match[2])
+}
 export function proxyRouteID(prefix='route-'){return prefix+Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join('')}
 export type PolicyView = {policy:ProxyPolicy;desired_revision:number;applied_revision:number;configured:boolean;external_revision?:boolean;error?:string;warnings?:string[]}
 export type ProxyRouteInput = Omit<ProxyRoute,'upstream'> & {upstream_port:number}

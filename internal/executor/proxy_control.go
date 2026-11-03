@@ -343,9 +343,7 @@ func (m *Manager) ProxyPolicy(ctx context.Context) (transport.ProxyPolicyView, e
 	return result, nil
 }
 
-// Frozen private loopback publications remain stable through an ordinary
-// Deploy. An ephemeral container IP, arbitrary URL and a public backend binding
-// are never accepted as a browser-selected upstream.
+// privatePublication describes an observed fixed TCP publication.
 func privatePublication(raw string) (host string, published, target int, private bool, ok bool) {
 	left, right, found := strings.Cut(raw, "->")
 	if !found {
@@ -376,11 +374,12 @@ func privatePublication(raw string) (host string, published, target int, private
 	ok = true
 	return
 }
-func proxyCandidateTargets(s domain.Service, actual []docker.Container) []transport.ProxyTarget {
+func proxyCandidateTargets(s domain.Service, actual []docker.Container, allowPublicObservation bool, model map[string]any) []transport.ProxyTarget {
 	roles := map[string]domain.ComponentRole{}
 	for _, v := range s.Containers {
 		roles[v.Component] = v.Role
 	}
+	components, _ := model["services"].(map[string]any)
 	selected := map[string]transport.ProxyTarget{}
 	for _, c := range actual {
 		if roles[c.Component] != domain.RoleApplication || c.State != "running" {
@@ -393,15 +392,24 @@ func proxyCandidateTargets(s domain.Service, actual []docker.Container) []transp
 				public = true
 			}
 		}
-		if public {
+		if public && !allowPublicObservation {
 			continue
 		}
+		approved, _ := components[c.Component].(map[string]any)
 		for _, raw := range c.Ports {
 			ip, published, target, private, ok := privatePublication(raw)
-			if !ok || !private {
+			if !ok || (public && !approvedProxyObservationPort(approved, ip, published, target)) {
 				continue
 			}
-			value := transport.ProxyTarget{ServiceID: s.ID, ServiceName: s.Name, Component: c.Component, UpstreamPort: target, UpstreamAddress: "http://" + net.JoinHostPort(ip, strconv.Itoa(published)), PrivateBinding: true}
+			if !private {
+				if ip != "0.0.0.0" {
+					continue
+				}
+				// An observed IPv4 wildcard publication also answers on
+				// loopback. Never dial a container IP or external address.
+				ip = "127.0.0.1"
+			}
+			value := transport.ProxyTarget{ServiceID: s.ID, ServiceName: s.Name, Component: c.Component, UpstreamPort: target, UpstreamAddress: "http://" + net.JoinHostPort(ip, strconv.Itoa(published)), PrivateBinding: !public}
 			key := c.Component + ":" + strconv.Itoa(target)
 			if old, exists := selected[key]; !exists || value.UpstreamAddress < old.UpstreamAddress {
 				selected[key] = value
@@ -417,6 +425,37 @@ func proxyCandidateTargets(s domain.Service, actual []docker.Container) []transp
 	})
 	return result
 }
+
+// An automatically assigned or mismatched Docker host port must not become a
+// saved observation route. An omitted approved host IP is the IPv4 wildcard.
+func approvedProxyObservationPort(component map[string]any, host string, published, target int) bool {
+	ports, _ := component["ports"].([]any)
+	for _, raw := range ports {
+		port, _ := raw.(map[string]any)
+		protocol, _ := port["protocol"].(string)
+		if protocol != "" && protocol != "tcp" {
+			continue
+		}
+		hostIP, _ := port["host_ip"].(string)
+		if hostIP == "" {
+			hostIP = "0.0.0.0"
+		}
+		ip, err := netip.ParseAddr(hostIP)
+		if err != nil || ip.Unmap().String() != host {
+			continue
+		}
+		portPublished, err := cutoverPortNumber(port["published"])
+		if err != nil || portPublished != published {
+			continue
+		}
+		portTarget, err := cutoverPortNumber(port["target"])
+		if err == nil && portTarget == target {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Manager) proxyServiceTargets(ctx context.Context, s domain.Service) ([]transport.ProxyTarget, proxyBinding, error) {
 	var binding proxyBinding
 	st, e := m.state(ctx, s)
@@ -427,21 +466,28 @@ func (m *Manager) proxyServiceTargets(ctx context.Context, s domain.Service) ([]
 	if e != nil {
 		return nil, binding, e
 	}
-	frozen, e := m.LoadConfiguration(ctx, digest)
+	model, e := m.observationConfiguration(ctx, s)
 	if e != nil {
 		return nil, binding, e
 	}
-	model, e := m.renderConfiguration(frozen)
-	if e != nil {
-		return nil, binding, e
+	if st.CurrentReleaseID != "" {
+		release, e := m.loadRelease(ctx, s, st.CurrentReleaseID)
+		if e != nil {
+			return nil, binding, e
+		}
+		pinModelImages(model, release.Spec().Images)
 	}
 	actual, e := m.verifyRuntime(ctx, s, st, model)
 	if e != nil {
 		return nil, binding, e
 	}
-	raw, _ := json.Marshal(st.Containers)
+	targets := proxyCandidateTargets(s, actual, m.Config.Proxy.AllowPublicBackendObservation, model)
+	raw, _ := json.Marshal(struct {
+		Containers []domain.ContainerRef
+		Targets    []transport.ProxyTarget
+	}{st.Containers, targets})
 	binding = proxyBinding{ServiceID: s.ID, PolicyRevision: s.PolicyRevision, StateSequence: st.Sequence, Configuration: digest, RuntimeDigest: domain.Hash(raw)}
-	return proxyCandidateTargets(s, actual), binding, nil
+	return targets, binding, nil
 }
 func (m *Manager) proxyTargets(ctx context.Context) (transport.ProxyTargets, []proxyBinding, error) {
 	result := transport.ProxyTargets{Targets: []transport.ProxyTarget{}, Unavailable: []transport.ProxyUnavailableTarget{}, AllowedListenIPs: append([]string{}, m.Config.Proxy.AllowedListenIPs...), ListenPortMin: m.Config.Proxy.ListenPortMin, ListenPortMax: m.Config.Proxy.ListenPortMax}
@@ -471,6 +517,9 @@ func (m *Manager) proxyTargets(ctx context.Context) (transport.ProxyTargets, []p
 				continue
 			}
 			reason := "Application requires a running, verified private loopback TCP publication; occupied/public ports need a separate cutover plan"
+			if m.Config.Proxy.AllowPublicBackendObservation {
+				reason = "Application requires a running, verified loopback or IPv4 wildcard TCP publication"
+			}
 			if e != nil {
 				reason = "Approved runtime could not be verified; resolve service drift or initialization first"
 			}
@@ -492,6 +541,17 @@ func (m *Manager) proxyAuthority() domain.Digest {
 	raw, _ := json.Marshal(m.Config.Proxy)
 	return domain.Hash(raw)
 }
+
+func validateProxyBackendMode(target transport.ProxyTarget, listen netip.Addr, wafMode string) error {
+	if target.PrivateBinding {
+		return nil
+	}
+	if !listen.Unmap().IsLoopback() || (wafMode != "" && wafMode != "observe_only") {
+		return proxyInput("A directly published backend requires a loopback proxy listener and observe_only WAF")
+	}
+	return nil
+}
+
 func (m *Manager) ProxyPreview(ctx context.Context, in transport.ProxyPreviewRequest) (transport.ProxyPreview, error) {
 	m.proxyMu.Lock()
 	defer m.proxyMu.Unlock()
@@ -533,6 +593,7 @@ func (m *Manager) ProxyPreview(ctx context.Context, in transport.ProxyPreviewReq
 		a, _ := netip.ParseAddr(ip)
 		allowed[a.Unmap().String()] = true
 	}
+	observesPublic := false
 	for _, r := range in.Routes {
 		ip, port, e := net.SplitHostPort(r.Listen)
 		addr, ipErr := netip.ParseAddr(ip)
@@ -540,17 +601,21 @@ func (m *Manager) ProxyPreview(ctx context.Context, in transport.ProxyPreviewReq
 		if e != nil || ipErr != nil || portErr != nil || !allowed[addr.Unmap().String()] || p < m.Config.Proxy.ListenPortMin || p > m.Config.Proxy.ListenPortMax {
 			return empty, proxyInput("Listener is outside the administrator-approved IP/port range")
 		}
-		var upstream string
+		var target transport.ProxyTarget
 		matches := 0
 		for _, t := range targets.Targets {
 			if t.ServiceID == r.ServiceID && t.Component == r.Component && t.UpstreamPort == r.UpstreamPort {
-				upstream = t.UpstreamAddress
+				target = t
 				matches++
 			}
 		}
 		if matches != 1 {
-			return empty, proxyInput("Choose a unique approved private loopback publication of a registered application component")
+			return empty, proxyInput("Choose a unique verified publication of a registered application component")
 		}
+		if err := validateProxyBackendMode(target, addr, r.WAF.Mode); err != nil {
+			return empty, err
+		}
+		observesPublic = observesPublic || !target.PrivateBinding
 		id := r.ID
 		if id == "" {
 			id = string(NewID("route-"))
@@ -565,7 +630,7 @@ func (m *Manager) ProxyPreview(ctx context.Context, in transport.ProxyPreviewReq
 		if r.WAF.Mode == "enforce" && !in.ConfirmChecker {
 			return empty, proxyInput("Confirm checker and observe-only verification before enabling enforcement")
 		}
-		wanted.Routes = append(wanted.Routes, proxyengine.Route{ID: id, ServiceID: string(r.ServiceID), Component: r.Component, Listen: net.JoinHostPort(addr.Unmap().String(), strconv.Itoa(p)), Host: r.Host, Upstream: upstream, Protocol: r.Protocol, TLS: r.TLS, TrustedProxyCIDRs: r.TrustedProxyCIDRs, Capture: r.Capture, WAF: r.WAF, Limits: r.Limits})
+		wanted.Routes = append(wanted.Routes, proxyengine.Route{ID: id, ServiceID: string(r.ServiceID), Component: r.Component, Listen: net.JoinHostPort(addr.Unmap().String(), strconv.Itoa(p)), Host: r.Host, Upstream: target.UpstreamAddress, Protocol: r.Protocol, TLS: r.TLS, TrustedProxyCIDRs: r.TrustedProxyCIDRs, Capture: r.Capture, WAF: r.WAF, Limits: r.Limits})
 	}
 	wanted, err = proxyengine.NormalizePolicy(wanted)
 	if err != nil {
@@ -582,7 +647,11 @@ func (m *Manager) ProxyPreview(ctx context.Context, in transport.ProxyPreviewReq
 	if len(proposals) >= 1024 {
 		return empty, proxyInput("Proxy preview history budget is exhausted")
 	}
-	p := proxyProposal{ProxyPreview: transport.ProxyPreview{ProposalID: NewID("proxy-plan-"), Policy: wanted, PreviousPolicy: latest.Policy, ObservedAppliedRevision: observed.AppliedRevision, Warnings: []string{"HTTP/1.1 and explicitly configured TLS termination are supported; TCP, gRPC and HTTP/2 are unsupported.", "Existing game ports are not moved by this plan; upstream bindings must stay private.", "Checker/NAT exceptions and limits must be verified before enforce."}, ExpiresAt: time.Now().UTC().Add(5 * time.Minute)}, BaseRevision: latest.Policy.Revision, AppliedRevision: observed.AppliedRevision, Bindings: bindings, Authority: m.proxyAuthority(), DesiredFileDigest: fileDigest, Actor: in.Initiator}
+	warnings := []string{"This plan adds proxy listeners without moving existing game ports.", "Checker/NAT exceptions and limits must be verified before enforce."}
+	if observesPublic {
+		warnings = append(warnings, "Requests to the existing direct ports bypass the proxy and its traffic log.")
+	}
+	p := proxyProposal{ProxyPreview: transport.ProxyPreview{ProposalID: NewID("proxy-plan-"), Policy: wanted, PreviousPolicy: latest.Policy, ObservedAppliedRevision: observed.AppliedRevision, Warnings: warnings, ExpiresAt: time.Now().UTC().Add(5 * time.Minute)}, BaseRevision: latest.Policy.Revision, AppliedRevision: observed.AppliedRevision, Bindings: bindings, Authority: m.proxyAuthority(), DesiredFileDigest: fileDigest, Actor: in.Initiator}
 	raw, _ := json.Marshal(p)
 	p.Digest = domain.Hash(raw)
 	if err = m.checkLocalAllocation(ctx, m.Config.StateDirectory, uint64(len(raw)+8192), 2, m.Config.Storage.Effective().StateMaxBytes); err != nil {
