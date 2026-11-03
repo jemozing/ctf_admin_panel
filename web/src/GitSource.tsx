@@ -62,7 +62,7 @@ export function GitFields({draft,onChange,disabled=false,hasCredentials=false,se
   </div>
 }
 
-export default function GitSourceView({serviceID,role,canFetch,initialized,onFetch}:{serviceID:string;role:Role;canFetch:boolean;initialized:boolean;onFetch:()=>void}){
+export default function GitSourceView({serviceID,candidateID,role,canFetch,initialized,onFetch}:{serviceID:string;candidateID?:string;role:Role;canFetch:boolean;initialized:boolean;onFetch:()=>void}){
   const [source,setSource]=useState<GitSource|null>(null),[draft,setDraft]=useState<GitDraft>(emptyGitDraft),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[dirty,setDirty]=useState(false),[error,setError]=useState(''),[fetchError,setFetchError]=useState(''),[saved,setSaved]=useState(false)
   useEffect(()=>{
     let active=true,first=true
@@ -70,12 +70,12 @@ export default function GitSourceView({serviceID,role,canFetch,initialized,onFet
     void refresh();const timer=setInterval(()=>void refresh(),5000);return()=>{active=false;clearInterval(timer)}
   },[serviceID])
   const save=async(event:FormEvent)=>{event.preventDefault();setBusy(true);setError('');setSaved(false);try{const value=await post<GitSource>(`/api/services/${serviceID}/source`,gitSourceInput(draft));setSource(value);setDraft({...emptyGitDraft,url:value.url||'',ref:value.ref||'HEAD',subdirectory:value.subdirectory||'',username:value.username||''});setDirty(false);setSaved(true)}catch(error){setError(errorMessage(error));setDraft(value=>({...value,token:''}))}finally{setBusy(false)}}
-  return <div className="panel"><div className="panel-heading"><div><h2><GitBranch size={17}/>Источник Git</h2><p>Получение исходников создаёт кандидат для сборки. Применение выполняется отдельно.</p></div><Badge tone={source?.configured?'good':'neutral'}>{source?.configured?'Подключён':'Не подключён'}</Badge></div>
+  return <div className="panel"><div className="panel-heading"><div><h2><GitBranch size={17}/>Источник Git</h2><p>Получить из Git → Собрать → Применить. Утверждённые Compose-файлы сервера сохраняются в Git-кандидате.</p></div><Badge tone={source?.configured?'good':'neutral'}>{source?.configured?'Подключён':'Не подключён'}</Badge></div>
     <div className="source-content">{loading?<div className="loading-line"><RefreshCw size={16} className="spin"/>Получаем настройки источника…</div>:<>
       {fetchError&&<Notice variant="error">{fetchError}</Notice>}{error&&<Notice variant="error">{error}</Notice>}{saved&&<Notice>Настройки Git сохранены. Получите исходники, затем соберите и примените кандидат.</Notice>}
       {!initialized&&<Notice>Для получения из Git завершите инициализацию сервиса и необходимые операции восстановления. Проверьте журнал во вкладке «Операции».</Notice>}
       {role==='admin'?<form onSubmit={event=>void save(event)}><GitFields draft={draft} serviceID={serviceID} hasCredentials={source?.has_credentials} disabled={busy} onChange={value=>{setDraft(value);setDirty(true);setSaved(false)}}/><div className="source-actions"><Button type="submit" variant="outline" busy={busy} disabled={!dirty}>Сохранить настройки</Button><Button type="button" disabled={!canFetch||busy||dirty} onClick={onFetch}><Download size={15}/>Получить из Git</Button></div>{dirty&&<small>Сохраните изменения перед получением исходников.</small>}</form>:<><div className="source-facts"><div><span>Репозиторий</span><code>{source?.url||'Не подключён'}</code></div><div><span>Ветка / тег / commit</span><code>{source?.ref||'—'}</code></div><div><span>Подкаталог</span><code>{source?.subdirectory||'Корень репозитория'}</code></div></div>{role==='viewer'?<p className="section-note">Источник настраивает Admin, исходники получают Admin и Defender.</p>:<Button disabled={!canFetch} onClick={onFetch}><Download size={15}/>Получить из Git</Button>}</>}
-      {source?.last_fetch&&<div className="git-last-fetch"><div><span>Последний полученный commit</span><code>{source.last_fetch.commit}</code></div><small>{time(source.last_fetch.at)} · снимок <code>{source.last_fetch.snapshot_id}</code></small><p>Этот commit относится к полученному кандидату. Действующий релиз указан во вкладке «Релизы».</p></div>}
+      {source?.last_fetch&&<div className="git-last-fetch"><div><span>Последний полученный commit</span><code>{source.last_fetch.commit}</code></div><small>{time(source.last_fetch.at)} · снимок <code>{source.last_fetch.snapshot_id}</code></small><p>{source.last_fetch.snapshot_id===candidateID?'Этот Git-кандидат выбран для следующей сборки.':'Для следующей сборки выбран другой кандидат. Чтобы снова собрать из Git, нажмите «Получить из Git».'} Действующий релиз указан во вкладке «Релизы».</p></div>}
     </>}
     </div></div>
 }

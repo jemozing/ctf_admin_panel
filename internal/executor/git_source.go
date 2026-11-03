@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/ctf-service-manager/ctf-service-manager/internal/domain"
@@ -136,17 +134,14 @@ func (m *Manager) fetchGitSource(ctx context.Context, s domain.Service, st runti
 		return err
 	}
 	defer tree.Close()
-	present := false
-	for _, managed := range s.ManagedPaths {
-		if _, err := os.Lstat(filepath.Join(tree.Directory, filepath.FromSlash(managed.Path))); err == nil {
-			present = true
-			break
-		}
+	hostOnlyCompose, err := m.preserveGitComposeInputs(ctx, s, st, tree.Directory)
+	if err != nil {
+		return err
 	}
-	if !present {
-		return errors.New("Git tree contains none of the approved managed paths; verify repository subdirectory")
+	provenance := &domain.GitProvenance{
+		URL: c.Configuration.URL, Ref: c.Configuration.Ref, Subdirectory: c.Configuration.Subdirectory,
+		Commit: tree.Commit, SourceRevision: c.Revision, HostComposeInputs: hostOnlyCompose,
 	}
-	provenance := &domain.GitProvenance{URL: c.Configuration.URL, Ref: c.Configuration.Ref, Subdirectory: c.Configuration.Subdirectory, Commit: tree.Commit, SourceRevision: c.Revision}
 	snap, err := m.capture(ctx, s, op.Spec.Initiator, domain.SnapshotCandidate, tree.Directory, provenance)
 	if err != nil {
 		return err

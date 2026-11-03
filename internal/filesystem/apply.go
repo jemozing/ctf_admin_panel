@@ -82,10 +82,37 @@ func Apply(ctx context.Context, contentRoot, activeRoot string, previous, next d
 
 // MaterializeBuild makes a disposable context with recorded modes, including
 // executable bits, while retaining executor ownership. The root remains 0700.
+// The complete artifact is verified even when exact files are excluded.
 // It never writes to an existing nonempty directory.
-func MaterializeBuild(ctx context.Context, contentRoot, destinationRoot string, manifest domain.Manifest) error {
+func MaterializeBuild(ctx context.Context, contentRoot, destinationRoot string, manifest domain.Manifest, excludeFiles ...string) error {
 	if err := Verify(ctx, contentRoot, manifest); err != nil {
 		return err
+	}
+	if len(excludeFiles) > 0 {
+		excluded := make(map[string]bool, len(excludeFiles))
+		for _, name := range excludeFiles {
+			excluded[name] = true
+		}
+		entries := manifest.Entries()
+		kept := entries[:0]
+		for _, entry := range entries {
+			if !excluded[entry.Path] {
+				kept = append(kept, entry)
+				continue
+			}
+			if entry.Type != domain.EntryFile {
+				return fmt.Errorf("build exclusion is not a regular file: %q", entry.Path)
+			}
+			delete(excluded, entry.Path)
+		}
+		if len(excluded) != 0 {
+			return fmt.Errorf("build exclusion is missing from the verified manifest")
+		}
+		filtered, err := domain.NewManifest(kept)
+		if err != nil {
+			return err
+		}
+		manifest = filtered
 	}
 	target, err := protectedDestination(destinationRoot)
 	if err != nil {
