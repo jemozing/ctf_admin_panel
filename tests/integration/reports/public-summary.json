@@ -585,6 +585,57 @@
       "target_ctf_acceptance": "open"
     }
   },
+  "cloud_compose_acceptance": {
+    "date": "2026-11-03",
+    "panel_commit": "0db22703810fc0474695ae6924d1f69fa9549754",
+    "platform": "linux/amd64",
+    "vcpus": 4,
+    "ram_mib": 3910,
+    "filesystem_gib": 38,
+    "docker_engine": "29.9.2",
+    "docker_compose": "5.7.0",
+    "projects": 4,
+    "git_probe_exact_revision_and_clone": 4,
+    "dashboard_http_admin_registrations": 4,
+    "successful_prepare_operations": 4,
+    "completed_prepare_build_deploy_rollback_cycles": 4,
+    "completed_shared_writable_root_bind_cycles": 1,
+    "shared_writable_root_bind_consumers": 2,
+    "http_200_at_baseline_deploy_and_rollback": 4,
+    "longest_observed_build_wait_seconds": 115.6,
+    "data_checks": {
+      "postgres_and_upload_markers_preserved": true,
+      "non_target_database_identity_unchanged": true,
+      "disposable_sqlite_marker_loss_observed": true,
+      "excluded_sqlite_and_upload_marker_hashes_preserved": true,
+      "separate_temporary_bind_marker_preserved": true
+    },
+    "concurrent_http_smoke_after_builds": {
+      "duration_seconds": 30.01,
+      "scope": "host_loopback_four_services_and_dashboard_health",
+      "requests_per_endpoint": 30,
+      "http_200": 150,
+      "requests": 150,
+      "endpoint_p95_ms_min": 4.7,
+      "endpoint_p95_ms_max": 11.1,
+      "minimum_mem_available_mib": 2430.3,
+      "disk_available_gib": 25.95,
+      "authenticated_host_metrics": true,
+      "history_points": 104
+    },
+    "browser_read_only": {
+      "browser": "Chromium",
+      "transport": "ssh_tunnel",
+      "login_http_status": 200,
+      "visible_services": 4,
+      "visible_plans": ["prepare", "deploy"],
+      "preview_http_status": 200,
+      "confirmed_operations": 0,
+      "javascript_runtime_errors": 0
+    },
+    "executor_fetch": "open",
+    "capacity_and_fault_acceptance": "open"
+  },
   "writable_code_binds_local": {
     "date": "2026-11-03",
     "go_race": "passed",
