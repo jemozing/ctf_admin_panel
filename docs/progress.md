@@ -4,6 +4,18 @@
 
 План и матрица обновлены 3 ноября 2026 года. Основание: ТЗ v2.15 и выбранный пользователем профиль соревнований `competition-4g`: Linux/amd64, 4 vCPU, 4 GiB RAM, виртуальный диск 40 GiB. Панель запускается через Compose `dashboard` + `executor` либо отдельные systemd-службы. Полная приёмка MVP не завершена; результаты native-поставки учитываются отдельно от CTF-сценариев и прежнего профиля 8 GiB.
 
+## Облачная проверка четырёх Compose-проектов — 3 ноября
+
+На Linux/amd64 с 4 vCPU, 3910 МиБ RAM и файловой системой 38 ГиБ обновили панель до `main` `0db2270`. Стенд использует Docker Engine 29.9.2 и Compose 5.7.0.
+
+Git Probe подтвердил доступ и точный SHA для четырёх проектов. Исходники клонировали, контейнеры запустили и зарегистрировали через HTTP API работающего dashboard с учётной записью Admin. Все четыре прошли Prepare → Build → Deploy → Rollback, включая файловый сервис с общим writable root bind кода у двух компонентов. Каждый сервис вернул HTTP 200 до Deploy, после Deploy и после Rollback. Самая долгая наблюдавшаяся сборка заняла около 116 секунд ожидания.
+
+В проекте с PostgreSQL маркеры в БД и uploads пережили переключения, а контейнер БД сохранил ID, образ, время запуска и mounts. В другом проекте исчез маркер SQLite, как предусмотрено выбранным режимом с допустимой потерей данных. Исключённый файл SQLite и маркер uploads в профиле с общим writable bind сохранили хеши. В проекте с отдельным bind для временных файлов сохранился маркер в этом каталоге.
+
+После завершения сборок четырём сервисам и dashboard health отправили по 30 HTTP-запросов параллельно через loopback хоста. За 30,01 с получено 150 ответов HTTP 200 из 150. p95 по отдельным точкам составил 4,7–11,1 мс, минимум `MemAvailable` — 2430,3 МиБ, доступное место — 25,95 ГиБ. API с авторизацией вернул метрики хоста и 104 исторические точки.
+
+В Chromium через SSH-туннель прошли вход и просмотр четырёх сервисов. Панель отобразила планы Prepare и Deploy для файлового сервиса. Оба запроса preview вернули HTTP 200. Оба окна закрыли на этапе просмотра. Ошибок JavaScript не зафиксировано. Fetch в панели, нагрузочная и аварийная приёмка остаются открытыми.
+
 ## Обновляемый writable bind-код с допустимой потерей данных — 3 ноября
 
 Добавлен opt-in для конкретных bind-монтов внутри ProjectDirectory: `allow_code_updates=true`, `significant=false`, `loss_accepted=true`. GUI предлагает «Код и временные данные · обновлять», пересчитывает пути через Admin/CSRF endpoint по immutable draft и требует отдельного согласия. Общие root binds подтверждаются у каждого потребителя, все компоненты обновляемого кода входят в Targets. Прежние проверки workspace, source/target/runtime identity, symlinks/parents и конфликтов сохранены. Значимые data binds без opt-in не пересекаются с кодом; старый JSON не получает новое разрешение автоматически.
@@ -15,7 +27,7 @@
 | W03 — managed-paths API, Admin/CSRF, strict JSON, draft identity, symlink/unknown/duplicate/non-bind/escape | Пройдено через executor/transport/dashboard; список — рекомендация, не approval; immutable draft и registry не изменяются |
 | W04 — реальные snapshots/candidate, MaterializeBuild, Apply и обратный Apply | Пройдено в файловом fixture: add/delete/возврат кода, DB/uploads/.env вне снимков и build context, новые исключённые runtime bytes сохраняются при обратном Apply. Это не Docker Stop/Build/Up |
 | W05 — GUI выбора обоих root binds, согласие, targets, pending/error, пересчёт, повторный draft и final review | 21 Chromium check с собранным React UI и синтетическим loopback API; 5 новых helper-тестов, всего 53 |
-| W06 — реальный Compose Fetch/Build/Deploy/Rollback сервиса с общим writable root bind | Не выполнено; VM и реальные игровые контейнеры не использовались |
+| W06 — реальный Compose Fetch/Build/Deploy/Rollback сервиса с общим writable root bind | Частично. Локальный Prepare → Build → Deploy → Rollback прошёл на облачном Linux/amd64 для одного проекта с двумя компонентами, которые используют общий writable root bind кода. Git Probe и клонирование подтверждены отдельно. Fetch через панель остаётся открытым |
 
 Общий `go test -race ./internal/... ./cmd/...`, vet и компиляция всех бинарников, production frontend build, 53 frontend helper и 193 packaging tests — PASS. В release evidence и окне операций показан риск потери данных вместо обещания неизменности кодового bind. [Использование](registration.md#writable-bind-код-без-переноса-данных), [проверки](testing.md#регистрация-writable-bind-кода). Полная Linux/CTF-приёмка и прежние A/P/C-статусы остаются отдельными.
 
