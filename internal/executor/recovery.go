@@ -322,10 +322,17 @@ func (m *Manager) compensate(ctx context.Context, op domain.Operation, req trans
 		return errors.New("active files changed after recovery approval")
 	}
 	if confirmedComposeSwitch {
+		var replaced []string
 		for _, c := range actual {
-			if hasTarget(s, c.Component) && c.State != "running" && c.State != "exited" && c.State != "created" {
-				return errors.New("unknown application state prevents automatic recovery")
+			if hasTarget(s, c.Component) {
+				if c.State != "running" && c.State != "exited" && c.State != "created" {
+					return errors.New("unknown application state prevents automatic recovery")
+				}
+				replaced = append(replaced, c.ID)
 			}
+		}
+		if err := m.checkComposePorts(ctx, s, targetRuntime.model, model, replaced); err != nil {
+			return err
 		}
 	}
 	for _, c := range actual {

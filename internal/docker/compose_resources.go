@@ -19,12 +19,13 @@ type ComposeResourceChange struct {
 }
 
 var composeResourceSettings = []string{"cpus", "mem_limit", "pids_limit"}
+var composeRevisionSettings = []string{"cpus", "mem_limit", "pids_limit", "ports"}
 
-// ComposeResourceChanges accepts revisions that differ only in supported
-// resource limits of selected targets. Empty values mean a limit is omitted.
+// ComposeResourceChanges accepts supported resource limits and changes to the
+// published addresses and port numbers of existing target bindings.
 func ComposeResourceChanges(current, proposed map[string]any, targets []string) ([]ComposeResourceChange, error) {
 	if !sameSettingsExcept(current, proposed, []string{"services"}) {
-		return nil, errors.New("Compose project settings differ outside supported resource limits")
+		return nil, errors.New("Compose project settings differ outside supported resource limits and published ports")
 	}
 	before, _ := current["services"].(map[string]any)
 	after, _ := proposed["services"].(map[string]any)
@@ -50,8 +51,8 @@ func ComposeResourceChanges(current, proposed map[string]any, targets []string) 
 			}
 			continue
 		}
-		if !sameSettingsExcept(left, right, composeResourceSettings) {
-			return nil, fmt.Errorf("Compose component %q changed outside supported resource limits", name)
+		if !sameSettingsExcept(left, right, composeRevisionSettings) {
+			return nil, fmt.Errorf("Compose component %q changed outside supported resource limits and published ports", name)
 		}
 		firstChange := len(changes)
 		for _, setting := range composeResourceSettings {
@@ -73,7 +74,11 @@ func ComposeResourceChanges(current, proposed map[string]any, targets []string) 
 			return nil, fmt.Errorf("Compose resource limits conflict for component %q", name)
 		}
 	}
-	return changes, nil
+	portChanges, _, err := composePublishedPortChanges(before, after, targets)
+	if err != nil {
+		return nil, err
+	}
+	return append(changes, portChanges...), nil
 }
 
 // Compose config normalizes each setting, but the Docker Engine checks their

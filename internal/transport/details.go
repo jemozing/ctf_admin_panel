@@ -49,6 +49,20 @@ type ComposeResourceChange struct {
 	Before    string `json:"before"`
 	After     string `json:"after"`
 }
+
+// ComposePortConflict carries a publication selected by the caller. It never
+// includes the identity or configuration of another listener.
+type ComposePortConflict struct {
+	Binding string
+	Reason  string
+}
+
+func (e *ComposePortConflict) Error() string {
+	return "Cannot publish " + e.Binding + ": " + e.Reason
+}
+
+func (e *ComposePortConflict) Unwrap() error { return store.ErrConflict }
+
 type PreviewResult struct {
 	ComposeFromGit            bool                     `json:"compose_from_git,omitempty"`
 	ComposeSourceTree         domain.Digest            `json:"compose_source_tree,omitempty"`

@@ -1,0 +1,101 @@
+package executor
+
+import (
+	"context"
+	"errors"
+	"net/netip"
+
+	"github.com/ctf-service-manager/ctf-service-manager/internal/docker"
+	"github.com/ctf-service-manager/ctf-service-manager/internal/domain"
+	"github.com/ctf-service-manager/ctf-service-manager/internal/transport"
+	"github.com/moby/moby/client"
+)
+
+func composeTargetIDs(s domain.Service, containers []domain.ContainerRef) []string {
+	var ids []string
+	for _, container := range containers {
+		if hasTarget(s, container.Component) {
+			ids = append(ids, container.ID)
+		}
+	}
+	return ids
+}
+
+// Docker may reserve a port without a listening process in our network
+// namespace. Use the daemon's publications plus managed proxy listeners.
+// External listeners can still race this check; the release recovery point
+// is committed before any container is stopped.
+func (m *Manager) checkComposePorts(ctx context.Context, s domain.Service, before, after map[string]any, replaced []string) error {
+	ports, err := docker.ComposeChangedPublishedPorts(before, after, s.Targets)
+	if err != nil || len(ports) == 0 {
+		return err
+	}
+	if m.Engine == nil || m.Engine.Client == nil {
+		return errors.New("Docker port reservation inventory is unavailable")
+	}
+	inventory, err := m.Engine.Client.ContainerList(ctx, client.ContainerListOptions{All: true})
+	if err != nil {
+		return errors.New("Docker port reservation inventory is unavailable")
+	}
+	releasing := make(map[string]bool, len(replaced))
+	for _, id := range replaced {
+		releasing[id] = true
+	}
+	for _, container := range inventory.Items {
+		if releasing[container.ID] {
+			continue
+		}
+		switch container.State {
+		case "running", "paused", "restarting", "removing":
+		default:
+			continue
+		}
+		for _, active := range container.Ports {
+			if active.PublicPort == 0 {
+				continue
+			}
+			binding := docker.PublishedPortBinding{HostIP: active.IP.Unmap(), Published: active.PublicPort, Protocol: active.Type}
+			for _, port := range ports {
+				if port.Overlaps(binding) {
+					return composePortConflict(port, "host port is already published by another container")
+				}
+			}
+		}
+	}
+	if m.Config.Proxy.Enabled {
+		revision, _, _, err := m.effectiveProxyRevision(ctx)
+		if err != nil {
+			return errors.New("HTTP Proxy listener inventory is unavailable")
+		}
+		for _, route := range revision.Policy.Routes {
+			listen, err := netip.ParseAddrPort(route.Listen)
+			if err != nil {
+				return errors.New("HTTP Proxy listener inventory is unavailable")
+			}
+			binding := docker.PublishedPortBinding{HostIP: listen.Addr().Unmap(), Published: listen.Port(), Protocol: "tcp"}
+			for _, port := range ports {
+				if port.Overlaps(binding) {
+					return composePortConflict(port, "host port is reserved by HTTP Proxy")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (m *Manager) validateNewComposePorts(s domain.Service, before, after map[string]any) error {
+	ports, err := docker.ComposeChangedPublishedPorts(before, after, s.Targets)
+	if err != nil {
+		return err
+	}
+	for _, port := range ports {
+		if m.Config.Capture.HostPortProtected(int(port.Published)) {
+			return composePortConflict(port, "host port is reserved for administration")
+		}
+	}
+	return nil
+}
+
+func composePortConflict(port docker.PublishedPortBinding, reason string) error {
+	return &transport.ComposePortConflict{Binding: port.String(), Reason: reason}
+}

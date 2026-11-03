@@ -552,7 +552,10 @@ func methodNotAllowed(w http.ResponseWriter, allow string) {
 	writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method is not supported")
 }
 func backendError(w http.ResponseWriter, err error) {
+	var portConflict *ComposePortConflict
 	switch {
+	case errors.As(err, &portConflict):
+		writeError(w, http.StatusConflict, "compose_port_conflict", portConflict.Error())
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "requested object not found")
 	case errors.Is(err, store.ErrIdempotencyConflict), errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrBusy):
