@@ -14,7 +14,8 @@ import (
 
 type gitProbeTestBackend struct {
 	testBackend
-	checks atomic.Int32
+	checks  atomic.Int32
+	browses atomic.Int32
 }
 
 func (b *gitProbeTestBackend) ProbeGitSource(_ context.Context, input GitProbeRequest) (GitProbeResult, error) {
@@ -23,6 +24,53 @@ func (b *gitProbeTestBackend) ProbeGitSource(_ context.Context, input GitProbeRe
 		return GitProbeResult{}, &sourcegit.ProbeError{Code: "git_access_failed", Message: "Git repository is unavailable"}
 	}
 	return GitProbeResult{Branches: []sourcegit.RemoteRef{{Name: "main", Ref: "refs/heads/main", Commit: strings.Repeat("a", 40)}}, SelectedRef: input.Source.Ref, RefStatus: "available", CheckedAt: time.Now().UTC()}, nil
+}
+
+func (b *gitProbeTestBackend) BrowseGitDirectories(_ context.Context, input GitDirectoriesRequest) (GitDirectoryListing, error) {
+	b.browses.Add(1)
+	if input.Directory == "missing" {
+		return GitDirectoryListing{}, &sourcegit.ProbeError{Code: "git_directory_missing", Message: "Git directory is unavailable"}
+	}
+	root := ""
+	return GitDirectoryListing{Directory: input.Directory, Parent: &root, Directories: []sourcegit.DirectoryEntry{}}, nil
+}
+
+func TestGitDirectoryBrowseTypedClientAndInvalidPath(t *testing.T) {
+	b := &gitProbeTestBackend{}
+	_, c := runServer(t, Options{Backend: b})
+	input := GitDirectoriesRequest{
+		Source:    GitSourceRequest{URL: "https://github.com/example/service.git", Ref: "refs/heads/main"},
+		Directory: "vuln-service",
+	}
+	result, err := c.BrowseGitDirectories(t.Context(), input)
+	if err != nil || result.Directory != "vuln-service" || result.Parent == nil || *result.Parent != "" || result.Directories == nil {
+		t.Fatalf("browse result: %#v %v", result, err)
+	}
+	input.Directory = "missing"
+	_, err = c.BrowseGitDirectories(t.Context(), input)
+	var protocol *ProtocolError
+	if !errors.As(err, &protocol) || protocol.Status != 404 || protocol.Code != "git_directory_missing" {
+		t.Fatalf("missing directory error: %v", err)
+	}
+	for _, directory := range []string{"../outside", "service/.git", "/etc"} {
+		request, err := http.NewRequest("POST", "http://executor/v1/git/directories", strings.NewReader(
+			`{"source":{"url":"https://github.com/example/service.git"},"directory":"`+directory+`"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		response, err := c.http.Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		response.Body.Close()
+		if response.StatusCode != 400 {
+			t.Errorf("invalid directory %q reached browse route: %d", directory, response.StatusCode)
+		}
+	}
+	if b.browses.Load() != 2 {
+		t.Fatal("invalid browse reached backend")
+	}
 }
 
 func TestGitProbeTypedClientAndSafeFailure(t *testing.T) {

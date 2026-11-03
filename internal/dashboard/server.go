@@ -242,8 +242,8 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, v)
-	case r.URL.Path == "/api/git/probe":
-		s.gitProbeRoute(w, r, session)
+	case r.URL.Path == "/api/git/probe" || r.URL.Path == "/api/git/directories":
+		s.gitRepositoryRoute(w, r, session)
 	case strings.HasPrefix(r.URL.Path, "/api/registration/"):
 		s.registrationRoutes(w, r, session)
 	case r.URL.Path == "/api/metrics/host":

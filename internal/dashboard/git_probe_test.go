@@ -137,3 +137,75 @@ func TestGitProbeAccessOrAuditFailureDuringRPCWithholdsPrivateBranches(t *testin
 		})
 	}
 }
+
+func TestGitDirectoryBrowseAdminCSRFAndSessionExpiry(t *testing.T) {
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+	const secret = "fixture-directory-token-never-return"
+	s := gitProbeAPIFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/git/directories" || r.Method != "POST" {
+			t.Error("wrong executor endpoint")
+		}
+		var input transport.GitDirectoriesRequest
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil ||
+			input.Source.Token != secret || input.Source.Ref != "refs/heads/main" ||
+			input.ServiceID != "service-1" || input.Directory != "vuln-service" {
+			t.Error("wrong Git directory browsing input")
+		}
+		entered <- struct{}{}
+		<-release
+		json.NewEncoder(w).Encode(transport.GitDirectoryListing{
+			Directory:   "vuln-service",
+			Directories: []sourcegit.DirectoryEntry{{Name: "private-dir", Path: "vuln-service/private-dir"}},
+		})
+	})
+	admin, csrf, user := loginAs(t, s, "admin")
+	createAccount(t, s, admin, csrf, "viewer", RoleViewer)
+	viewer, viewerCSRF, _ := loginAs(t, s, "viewer")
+	input := transport.GitDirectoriesRequest{
+		Source:    transport.GitSourceRequest{URL: "https://github.com/example/service.git", Ref: "refs/heads/main", Token: secret},
+		ServiceID: "service-1",
+		Directory: "vuln-service",
+	}
+	const path = "/api/git/directories"
+	for _, tc := range []struct {
+		cookie *http.Cookie
+		token  string
+		want   int
+	}{{nil, "", 401}, {admin, "", 403}, {viewer, viewerCSRF, 403}} {
+		if response := request(t, s, "POST", path, input, tc.cookie, tc.token); response.Code != tc.want {
+			t.Fatalf("directory browse access: got %d want %d", response.Code, tc.want)
+		}
+	}
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- request(t, s, "POST", path, input, admin, csrf)
+	}()
+	select {
+	case <-entered:
+	case response := <-done:
+		t.Fatalf("directory browse did not reach executor: %d %s", response.Code, response.Body.String())
+	}
+	_, err := s.db.Exec("DELETE FROM sessions WHERE user_id=?", user.ID)
+	close(release)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := <-done
+	if response.Code != 401 || strings.Contains(response.Body.String(), "private-dir") || strings.Contains(response.Body.String(), secret) {
+		t.Fatalf("private directories returned after session expiry: %d %s", response.Code, response.Body.String())
+	}
+	var audit string
+	if err := s.db.QueryRow("SELECT COALESCE(group_concat(action || target || result || operation_id), '') FROM audit").Scan(&audit); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(audit, secret) || strings.Contains(audit, input.Directory) || !strings.Contains(audit, "source.browse") {
+		t.Fatal("directory browse audit absent or contains private input")
+	}
+}

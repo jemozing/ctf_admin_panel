@@ -132,19 +132,57 @@ func (r runner) command(ctx context.Context, args ...string) *exec.Cmd {
 	return cmd
 }
 
-func fetch(parent context.Context, c Config, token []byte, local bool) (_ *Tree, resultErr error) {
-	if err := validateGitToken(token); err != nil {
+func (r runner) objectCommand(ctx context.Context, args ...string) *exec.Cmd {
+	// Never let a local object lookup start a transport, even if a server
+	// advertised a partial clone and omitted a tree needed by the lookup.
+	return r.command(ctx, append([]string{"-c", "protocol.https.allow=never", "-c", "protocol.file.allow=never"}, args...)...)
+}
+
+func fetch(parent context.Context, c Config, token []byte, local bool) (*Tree, error) {
+	var tree Tree
+	root, err := withFetchedRepository(parent, c, token, local, false, func(ctx context.Context, r runner, commit string) error {
+		listing := &limitedBuffer{limit: 4 << 20}
+		listCmd := r.command(ctx, "ls-tree", "-rz", "--full-tree", commit)
+		listCmd.Stdout = listing
+		if err := listCmd.Run(); err != nil {
+			return errors.New("Git tree exceeds listing limits")
+		}
+		entries, err := parseTree(listing.Bytes(), c.Subdirectory)
+		if err != nil {
+			return err
+		}
+		destination := filepath.Join(r.root, "tree")
+		if err := os.Mkdir(destination, 0700); err != nil {
+			return err
+		}
+		if err := exportBlobs(ctx, r, destination, entries); err != nil {
+			return err
+		}
+		tree = Tree{Directory: destination, Commit: commit}
+		return nil
+	})
+	if err != nil {
 		return nil, err
+	}
+	tree.root = root
+	return &tree, nil
+}
+
+// withFetchedRepository confines Git's object store to a disposable bare
+// repository and passes only its exact resolved commit to the caller.
+func withFetchedRepository(parent context.Context, c Config, token []byte, local, metadataOnly bool, visit func(context.Context, runner, string) error) (_ string, resultErr error) {
+	if err := validateGitToken(token); err != nil {
+		return "", err
 	}
 	ctx, cancel := context.WithTimeout(parent, Timeout)
 	defer cancel()
 	binary, err := exec.LookPath("git")
 	if err != nil {
-		return nil, errors.New("Git executable is unavailable")
+		return "", errors.New("Git executable is unavailable")
 	}
 	root, err := os.MkdirTemp("", "ctfm-git-")
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	defer func() {
 		if resultErr != nil {
@@ -152,24 +190,24 @@ func fetch(parent context.Context, c Config, token []byte, local bool) (_ *Tree,
 		}
 	}()
 	if err := os.Chmod(root, 0711); err != nil {
-		return nil, err
+		return "", err
 	}
 	repo := filepath.Join(root, "objects")
 	if err := os.Mkdir(repo, 0700); err != nil {
-		return nil, err
+		return "", err
 	}
 	if err := prepareRepository(repo); err != nil {
-		return nil, err
+		return "", err
 	}
 	env := gitEnvironment(repo, c, token)
 	r := runner{binary: binary, root: root, repo: repo, env: env, local: local}
 	if err := verifyGitVersion(ctx, r); err != nil {
-		return nil, err
+		return "", err
 	}
 	if !local {
 		r.resolution, err = pinnedGitResolution(ctx, c.URL)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 	}
 	// The Docker /tmp tmpfs provides a hard outer bound; this early check also
@@ -197,42 +235,32 @@ func fetch(parent context.Context, c Config, token []byte, local bool) (_ *Tree,
 		}
 	}()
 	if err := r.command(ctx, "init", "--bare", ".").Run(); err != nil {
-		return nil, errors.New("cannot initialize isolated Git repository")
+		return "", errors.New("cannot initialize isolated Git repository")
 	}
 	// Depth is also a transport boundary: Git refuses the dumb HTTP walker,
 	// which otherwise supports server-supplied alternate repository URLs.
-	if err := r.command(ctx, "fetch", "--depth=1", "--no-tags", "--no-recurse-submodules", "--", c.URL, c.Ref).Run(); err != nil {
-		return nil, errors.New("Git fetch failed; verify HTTPS URL, ref, credentials and repository limits")
+	args := []string{"fetch", "--depth=1", "--no-tags", "--no-recurse-submodules"}
+	if metadataOnly {
+		args = append(args, "--filter=blob:none")
+	}
+	if err := r.command(ctx, append(args, "--", c.URL, c.Ref)...).Run(); err != nil {
+		return "", errors.New("Git fetch failed; verify HTTPS URL, ref, credentials and repository limits")
 	}
 	if err := checkRepository(repo); err != nil {
-		return nil, err
+		return "", err
 	}
-	commitOut, err := r.command(ctx, "rev-parse", "--verify", "FETCH_HEAD^{commit}").Output()
+	commitOut, err := r.objectCommand(ctx, "rev-parse", "--verify", "FETCH_HEAD^{commit}").Output()
 	commit := strings.TrimSpace(string(commitOut))
 	if err != nil || !objectPattern.MatchString(commit) {
-		return nil, errors.New("Git ref does not resolve to one exact commit")
+		return "", errors.New("Git ref does not resolve to one exact commit")
 	}
-	listing := &limitedBuffer{limit: 4 << 20}
-	listCmd := r.command(ctx, "ls-tree", "-rz", "--full-tree", commit)
-	listCmd.Stdout = listing
-	if err := listCmd.Run(); err != nil {
-		return nil, errors.New("Git tree exceeds listing limits")
-	}
-	entries, err := parseTree(listing.Bytes(), c.Subdirectory)
-	if err != nil {
-		return nil, err
-	}
-	destination := filepath.Join(root, "tree")
-	if err := os.Mkdir(destination, 0700); err != nil {
-		return nil, err
-	}
-	if err := exportBlobs(ctx, r, destination, entries); err != nil {
-		return nil, err
+	if err := visit(ctx, r, commit); err != nil {
+		return "", err
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, errors.New("Git source operation expired or exceeded repository limits")
+		return "", errors.New("Git source operation expired or exceeded repository limits")
 	}
-	return &Tree{Directory: destination, Commit: commit, root: root}, nil
+	return root, nil
 }
 
 // gitEnvironment is shared with transport tests so they exercise the exact
@@ -392,14 +420,16 @@ func exportBlobs(ctx context.Context, r runner, destination string, entries []en
 }
 
 type limitedBuffer struct {
-	buffer bytes.Buffer
-	limit  int
+	buffer   bytes.Buffer
+	limit    int
+	overflow bool
 }
 
 func (b *limitedBuffer) Bytes() []byte { return b.buffer.Bytes() }
 
 func (b *limitedBuffer) Write(p []byte) (int, error) {
 	if len(p) > b.limit-b.buffer.Len() {
+		b.overflow = true
 		return 0, errors.New("Git output limit exceeded")
 	}
 	return b.buffer.Write(p)

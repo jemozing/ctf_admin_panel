@@ -8,7 +8,7 @@ import (
 	"github.com/ctf-service-manager/ctf-service-manager/internal/transport"
 )
 
-func (s *Server) gitProbeRoute(w http.ResponseWriter, r *http.Request, current session) {
+func (s *Server) gitRepositoryRoute(w http.ResponseWriter, r *http.Request, current session) {
 	if current.User.Role != RoleAdmin {
 		s.deny(w, r, current.User.ID)
 		return
@@ -20,32 +20,52 @@ func (s *Server) gitProbeRoute(w http.ResponseWriter, r *http.Request, current s
 	if !method(w, r, "POST") {
 		return
 	}
+	if r.URL.Path == "/api/git/directories" {
+		var input transport.GitDirectoriesRequest
+		if decodeGitRequest(w, r, &input) {
+			s.completeGitRequest(w, r, current, "source.browse", string(input.ServiceID), func() (any, error) {
+				return s.executor.BrowseGitDirectories(r.Context(), input)
+			})
+		}
+		return
+	}
+	var input transport.GitProbeRequest
+	if decodeGitRequest(w, r, &input) {
+		s.completeGitRequest(w, r, current, "source.probe", string(input.ServiceID), func() (any, error) {
+			return s.executor.ProbeGitSource(r.Context(), input)
+		})
+	}
+}
+
+func decodeGitRequest(w http.ResponseWriter, r *http.Request, input interface{ Validate() error }) bool {
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || media != "application/json" {
 		apiError(w, 415, "invalid_content_type", "Content-Type must be application/json")
-		return
+		return false
 	}
 	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16*1024))
 	if err != nil {
 		apiError(w, 413, "body_too_large", "Git check request exceeds limit")
-		return
+		return false
 	}
-	var input transport.GitProbeRequest
-	if err := transport.DecodeRegistrationJSON(data, &input); err != nil {
+	if err := transport.DecodeRegistrationJSON(data, input); err != nil {
 		apiError(w, 400, "invalid_request", "Git check contains invalid fields")
-		return
+		return false
 	}
 	if err := input.Validate(); err != nil {
 		apiError(w, 400, "invalid_request", err.Error())
-		return
+		return false
 	}
-	target := string(input.ServiceID)
-	if err := s.audit(r.Context(), current.User.ID, "source.probe", target, "requested", ""); err != nil {
+	return true
+}
+
+func (s *Server) completeGitRequest(w http.ResponseWriter, r *http.Request, current session, action, target string, execute func() (any, error)) {
+	if err := s.audit(r.Context(), current.User.ID, action, target, "requested", ""); err != nil {
 		internalError(w)
 		return
 	}
-	result, probeErr := s.executor.ProbeGitSource(r.Context(), input)
-	// Private branch names must not outlive the initiating Admin session.
+	result, requestErr := execute()
+	// Private repository metadata must not outlive the initiating Admin session.
 	cookie, err := r.Cookie(s.cookieName())
 	if err != nil {
 		apiError(w, 401, "unauthenticated", "Sign in to continue")
@@ -60,15 +80,15 @@ func (s *Server) gitProbeRoute(w http.ResponseWriter, r *http.Request, current s
 		s.deny(w, r, fresh.User.ID)
 		return
 	}
-	if probeErr != nil {
-		if err := s.audit(r.Context(), current.User.ID, "source.probe", target, "failed", ""); err != nil {
+	if requestErr != nil {
+		if err := s.audit(r.Context(), current.User.ID, action, target, "failed", ""); err != nil {
 			internalError(w)
 			return
 		}
-		executorError(w, probeErr)
+		executorError(w, requestErr)
 		return
 	}
-	if err := s.audit(r.Context(), current.User.ID, "source.probe", target, "completed", ""); err != nil {
+	if err := s.audit(r.Context(), current.User.ID, action, target, "completed", ""); err != nil {
 		internalError(w)
 		return
 	}
