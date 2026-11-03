@@ -147,7 +147,7 @@ func (m *Manager) cutoverFrozen(ctx context.Context, id domain.ID) (domain.Servi
 	if st.CurrentReleaseID == "" || st.BaselineID == "" {
 		return s, st, Configuration{}, nil, nil, proxyInput("Initialize the service baseline before transferring ports")
 	}
-	digest, err := m.Store.GetServiceConfiguration(ctx, s.ID, s.PolicyRevision)
+	digest, err := m.activeConfigurationDigest(ctx, s, st)
 	if err != nil {
 		return s, st, Configuration{}, nil, nil, err
 	}
@@ -514,7 +514,7 @@ func (m *Manager) ProxyCutoverPreview(ctx context.Context, in transport.ProxyCut
 	if err = m.proxyRPC(ctx, "POST", "/v1/preflight-cutover", proxyengine.CutoverPreflightRequest{Policy: wanted, ReleasedListeners: bindings, PendingUpstreams: origins}, &preflight); err != nil {
 		return empty, err
 	}
-	digest, err := m.Store.GetServiceConfiguration(ctx, s.ID, s.PolicyRevision)
+	digest, err := m.activeConfigurationDigest(ctx, s, st)
 	if err != nil {
 		return empty, err
 	}
@@ -581,7 +581,7 @@ func (m *Manager) cutoverFresh(ctx context.Context, p proxyCutoverProposal) erro
 	if err != nil {
 		return err
 	}
-	digest, err := m.Store.GetServiceConfiguration(ctx, s.ID, s.PolicyRevision)
+	digest, err := m.activeConfigurationDigest(ctx, s, st)
 	if err != nil {
 		return err
 	}

@@ -61,7 +61,7 @@ func (m *Manager) GitSource(ctx context.Context, id domain.ID) (transport.GitSou
 		if err := json.Unmarshal(record.Payload, &snap); err != nil {
 			return view, err
 		}
-		if snap.GitSource == nil || snap.GitSource.SourceRevision != c.Revision {
+		if snap.GitSource == nil || snap.GitSource.ComposeRevision || snap.GitSource.SourceRevision != c.Revision {
 			continue
 		}
 		if view.LastFetch == nil || snap.CreatedAt.After(view.LastFetch.At) {
@@ -84,7 +84,8 @@ func (m *Manager) ConfigureGitSource(ctx context.Context, id domain.ID, input tr
 		return transport.GitSourceView{}, err
 	}
 	for _, op := range ops {
-		if op.Spec.ServiceID == id && op.Spec.Kind == domain.OperationFetchSource && !op.State.Terminal() {
+		if op.Spec.ServiceID == id && !op.State.Terminal() &&
+			(op.Spec.Kind == domain.OperationFetchSource || op.Spec.Kind == domain.OperationPrepareCompose) {
 			return transport.GitSourceView{}, store.ErrBusy
 		}
 	}
@@ -108,21 +109,18 @@ func (m *Manager) ConfigureGitSource(ctx context.Context, id domain.ID, input tr
 	}
 	return m.GitSource(ctx, id)
 }
-func (m *Manager) fetchGitSource(ctx context.Context, s domain.Service, st runtimeState, op domain.Operation) error {
-	c, err := m.gitConfiguration(ctx, s.ID)
+func (m *Manager) fetchConfiguredGitTree(ctx context.Context, serviceID domain.ID) (*sourcegit.Tree, *domain.GitProvenance, error) {
+	c, err := m.gitConfiguration(ctx, serviceID)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	var token []byte
 	if c.Credential != nil {
 		token, err = m.Vault.Read(*c.Credential)
 		if err != nil {
-			return errors.New("Git credentials unavailable; configure a new token")
+			return nil, nil, errors.New("Git credentials unavailable; configure a new token")
 		}
 		defer clear(token)
-	}
-	if err := m.stage(ctx, op.Spec.ID, domain.StageCopying); err != nil {
-		return err
 	}
 	var tree *sourcegit.Tree
 	err = m.withArtifactReleased(ctx, func(ctx context.Context) error {
@@ -131,6 +129,21 @@ func (m *Manager) fetchGitSource(ctx context.Context, s domain.Service, st runti
 		return err
 	})
 	if err != nil {
+		return nil, nil, err
+	}
+	provenance := &domain.GitProvenance{
+		URL: c.Configuration.URL, Ref: c.Configuration.Ref, Subdirectory: c.Configuration.Subdirectory,
+		Commit: tree.Commit, SourceRevision: c.Revision,
+	}
+	return tree, provenance, nil
+}
+
+func (m *Manager) fetchGitSource(ctx context.Context, s domain.Service, st runtimeState, op domain.Operation) error {
+	if err := m.stage(ctx, op.Spec.ID, domain.StageCopying); err != nil {
+		return err
+	}
+	tree, provenance, err := m.fetchConfiguredGitTree(ctx, s.ID)
+	if err != nil {
 		return err
 	}
 	defer tree.Close()
@@ -138,10 +151,7 @@ func (m *Manager) fetchGitSource(ctx context.Context, s domain.Service, st runti
 	if err != nil {
 		return err
 	}
-	provenance := &domain.GitProvenance{
-		URL: c.Configuration.URL, Ref: c.Configuration.Ref, Subdirectory: c.Configuration.Subdirectory,
-		Commit: tree.Commit, SourceRevision: c.Revision, HostComposeInputs: hostOnlyCompose,
-	}
+	provenance.HostComposeInputs = hostOnlyCompose
 	snap, err := m.capture(ctx, s, op.Spec.Initiator, domain.SnapshotCandidate, tree.Directory, provenance)
 	if err != nil {
 		return err

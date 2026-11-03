@@ -165,6 +165,10 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request, current session
 	if !decodeBody(w, r, &input) {
 		return
 	}
+	if current.User.Role != RoleAdmin && (input.Action == domain.OperationPrepareCompose || input.ConfirmComposeChange) {
+		s.deny(w, r, current.User.ID)
+		return
+	}
 	input.Initiator = domain.ID(current.User.ID)
 	if input.AcceptFileDrift && !current.User.SensitiveAccess {
 		s.deny(w, r, current.User.ID)

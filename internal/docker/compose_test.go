@@ -3,6 +3,7 @@ package docker
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,5 +121,74 @@ func TestNormalizeDecodesComposeRendererDollarsBeforeFreezing(t *testing.T) {
 	}
 	if strings.Contains(string(public), "pa$") {
 		t.Fatal("literal secret leaked into public report")
+	}
+}
+
+func TestNormalizeWithComposeFilesUsesVerifiedCandidateAtOriginalProjectPath(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(root, "project")
+	if err := os.Mkdir(project, 0700); err != nil {
+		t.Fatal(err)
+	}
+	live := []byte("services:\n  app:\n    image: app:live\n")
+	path := filepath.Join(project, "compose.yaml")
+	if err := os.WriteFile(path, live, 0600); err != nil {
+		t.Fatal(err)
+	}
+	plugin := filepath.Join(root, "compose")
+	marker := filepath.Join(root, "invoked")
+	fixture := `#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --project-directory) test "$2" = "$PWD"; shift ;;
+    --file) grep -q 'image: app:candidate' "$2"; shift ;;
+  esac
+  shift
+done
+touch "` + marker + `"
+printf '{"name":"files","services":{"app":{"image":"app:candidate","cpus":0.5}}}'
+`
+	if err := os.WriteFile(plugin, []byte(fixture), 0700); err != nil {
+		t.Fatal(err)
+	}
+	c := config.Config{DockerBinary: "/unused/docker", ComposeBinary: plugin, DockerHost: "unix:///unused.sock", DiscoveryRoots: []string{project}, Development: true}
+	input := ComposeInput{ProjectDirectory: project, ProjectName: "files", Files: []string{"compose.yaml"}}
+	invalid := []map[string][]byte{
+		nil,
+		{"../compose.yaml": live},
+		{"compose.yaml": []byte("include: ../other.yaml\n")},
+		{"compose.yaml": []byte("services:\n  app:\n    cpus: !reset 0\n")},
+		{"compose.yaml": []byte("services: {}\n---\nservices: {}\n")},
+	}
+	for _, files := range invalid {
+		if _, err := NormalizeWithComposeFiles(t.Context(), c, input, files); err == nil {
+			t.Fatalf("invalid input accepted: %#v", files)
+		}
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatal("Compose plugin was run for invalid input")
+		}
+	}
+	files := map[string][]byte{"compose.yaml": []byte("services:\n  app:\n    image: app:candidate\n    cpus: 0.5\n")}
+	report, err := NormalizeWithComposeFiles(t.Context(), c, input, files)
+	if err != nil || len(report.Components) != 1 || report.Components[0].Image != "app:candidate" {
+		t.Fatalf("candidate not normalized: %+v, %v", report.Components, err)
+	}
+	current, err := os.ReadFile(path)
+	if err != nil || string(current) != string(live) {
+		t.Fatalf("live Compose was modified: %v", err)
+	}
+}
+
+func TestComposeLimitedBufferAlsoBoundsCopy(t *testing.T) {
+	var b = limitedBuffer{limit: 2}
+	if n, err := io.Copy(&b, io.LimitReader(strings.NewReader("abcdef"), 6)); err != nil || n != 6 {
+		t.Fatalf("copy failed: %d, %v", n, err)
+	}
+	if !b.truncated || b.buffer.String() != "ab" {
+		t.Fatalf("Compose command output exceeded its bound: %q", b.buffer.String())
 	}
 }

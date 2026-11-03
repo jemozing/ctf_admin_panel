@@ -9,6 +9,7 @@
 | Несколько компонентов app/db/cache | Один контейнер на Compose component в начальном профиле, роли подтверждены |
 | Несколько Compose-файлов | Порядок `-f`, project directory и точное исходное project name зафиксированы |
 | Profiles | Набор выбранных profiles фиксирован; неизвестные компоненты не включаются автоматически |
+| Лимиты локального Docker Compose | `deploy.resources.limits` с CPU и памятью при импорте приводятся к эквивалентным `cpus` и `mem_limit`. Конфликтующие значения отклоняются. |
 | Env files и secrets | Значения импортированы в immutable versions executor; в Release и web только refs |
 | Локальный Dockerfile/context | Все пути внутри утверждённых roots; staging вне active/source/data mounts |
 | Готовый image | Полный локальный image ID и отдельный удерживающий тег на релиз |

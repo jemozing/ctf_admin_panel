@@ -43,7 +43,17 @@ type FileChange struct {
 	Path   string `json:"path"`
 	Change string `json:"change"`
 }
+type ComposeResourceChange struct {
+	Component string `json:"component"`
+	Setting   string `json:"setting"`
+	Before    string `json:"before"`
+	After     string `json:"after"`
+}
 type PreviewResult struct {
+	ComposeFromGit            bool                     `json:"compose_from_git,omitempty"`
+	ComposeSourceTree         domain.Digest            `json:"compose_source_tree,omitempty"`
+	ComposeChange             bool                     `json:"compose_change,omitempty"`
+	ComposeChanges            []ComposeResourceChange  `json:"compose_changes,omitempty"`
 	Space                     PreviewSpace             `json:"space"`
 	RecoveryOperationID       domain.ID                `json:"recovery_operation_id,omitempty"`
 	ServiceID                 domain.ID                `json:"service_id"`

@@ -22,7 +22,7 @@ const (
 
 func operationLane(kind domain.OperationKind) workLane {
 	switch kind {
-	case domain.OperationBuild:
+	case domain.OperationBuild, domain.OperationPrepareCompose:
 		return laneBuild
 	case domain.OperationPrepare, domain.OperationSnapshot, domain.OperationRestoreSnapshot, domain.OperationFetchSource:
 		return laneCopy
@@ -198,9 +198,9 @@ func (m *Manager) runScheduledOperation(ctx context.Context, op domain.Operation
 		err = execute(task, op)
 	}
 	stop()
-	record, done := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-	defer done()
-	latest, getErr := m.Store.GetOperation(record, op.Spec.ID)
+	lookup, endLookup := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	latest, getErr := m.Store.GetOperation(lookup, op.Spec.ID)
+	endLookup()
 	if getErr != nil {
 		return getErr
 	}
@@ -216,10 +216,27 @@ func (m *Manager) runScheduledOperation(ctx context.Context, op domain.Operation
 			state = domain.OperationCancelled
 		}
 		if latest.MutationStarted {
-			state = domain.OperationRequiresRecovery
-			evidence.ActualStateKnown = false
+			// A daemon restart leaves the durable point for an explicit
+			// Recover; an observed live failure can be compensated in place.
+			var attempted bool
+			var recoveryErr error
+			if ctx.Err() == nil {
+				attempted, recoveryErr = m.recoverFailedComposeSwitch(ctx, latest)
+			}
+			if attempted && recoveryErr == nil {
+				evidence.ReturnedToPrevious = true
+				evidence.Reason += "; previous Compose release restored"
+			} else {
+				state = domain.OperationRequiresRecovery
+				evidence.ActualStateKnown = false
+				if recoveryErr != nil {
+					evidence.Reason += "; automatic Compose recovery: " + recoveryErr.Error()
+				}
+			}
 		}
 	}
+	record, done := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer done()
 	if err == nil {
 		if stageErr := m.stage(record, op.Spec.ID, domain.StageRecording); stageErr != nil && !errors.Is(stageErr, store.ErrConflict) {
 			return stageErr

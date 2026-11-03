@@ -148,6 +148,16 @@ func TestGitCandidateFreezesExactCommitInSnapshotAndPublicView(t *testing.T) {
 	if err != nil || view.LastFetch == nil || view.LastFetch.SnapshotID != snap.ID || view.LastFetch.Commit != provenance.Commit {
 		t.Fatalf("candidate not visible: %#v %v", view, err)
 	}
+	revision := *provenance
+	revision.Commit = strings.Repeat("b", 40)
+	revision.ComposeRevision = true
+	if _, err := f.m.capture(t.Context(), f.s, "web-admin", domain.SnapshotCandidate, f.s.SourceDirectory, &revision); err != nil {
+		t.Fatal(err)
+	}
+	view, err = f.m.GitSource(t.Context(), f.s.ID)
+	if err != nil || view.LastFetch == nil || view.LastFetch.SnapshotID != snap.ID {
+		t.Fatalf("Compose preparation displaced the ordinary Git fetch: %#v %v", view, err)
+	}
 	config.Ref = "other"
 	if _, err := f.m.ConfigureGitSource(t.Context(), f.s.ID, config); err != nil {
 		t.Fatal(err)

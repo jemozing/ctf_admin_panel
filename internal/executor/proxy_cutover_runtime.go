@@ -64,7 +64,7 @@ func (m *Manager) applyRuntimePorts(ctx context.Context, s domain.Service, model
 	if err != nil || !v.Active {
 		return err
 	}
-	digest, err := m.Store.GetServiceConfiguration(ctx, s.ID, s.PolicyRevision)
+	digest, err := m.currentConfigurationDigest(ctx, s)
 	if err != nil {
 		return err
 	}

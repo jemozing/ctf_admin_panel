@@ -171,6 +171,7 @@ func (m *Manager) ServiceDetails(ctx context.Context, id domain.ID) (transport.S
 		return result, err
 	}
 	result.Capabilities["prepare"] = initialized
+	result.Capabilities["prepare_compose"] = initialized && st.CurrentReleaseID != ""
 	source, err := m.GitSource(ctx, s.ID)
 	if err != nil {
 		return result, err
@@ -271,7 +272,7 @@ func (m *Manager) Preview(ctx context.Context, req transport.SubmitRequest) (tra
 		return result, err
 	}
 	result.CurrentTreeDigest = manifest.Digest()
-	if req.Action == domain.OperationPrepare || req.Action == domain.OperationFetchSource || req.Action == domain.OperationBuild || req.Action == domain.OperationRestoreSnapshot {
+	if req.Action == domain.OperationPrepare || req.Action == domain.OperationPrepareCompose || req.Action == domain.OperationFetchSource || req.Action == domain.OperationBuild || req.Action == domain.OperationRestoreSnapshot {
 		initialized, err := m.registrationInitialized(ctx, s, st.BaselineID)
 		if err != nil {
 			return result, err
@@ -297,6 +298,8 @@ func (m *Manager) Preview(ctx context.Context, req transport.SubmitRequest) (tra
 			return result, errors.New("create the baseline snapshot first")
 		}
 		target, err = filesystem.Observe(ctx, s.SourceDirectory, s.ManagedPaths, nil)
+	case domain.OperationPrepareCompose:
+		target, err = m.previewPrepareCompose(ctx, s, st, req, &result)
 	case domain.OperationFetchSource:
 		if st.BaselineID == "" {
 			return result, errors.New("create the baseline snapshot first")
@@ -351,6 +354,9 @@ func (m *Manager) Preview(ctx context.Context, req transport.SubmitRequest) (tra
 		var snap domain.Snapshot
 		snap, err = m.loadSnapshot(ctx, spec.SnapshotID)
 		target = snap.Manifest
+		if err == nil {
+			err = m.previewComposeSwitch(ctx, s, st, spec, snap, &result)
+		}
 		for _, d := range s.DataPaths {
 			result.DataCompatibilityRequired = result.DataCompatibilityRequired || d.Significant
 		}
@@ -360,7 +366,7 @@ func (m *Manager) Preview(ctx context.Context, req transport.SubmitRequest) (tra
 	if err != nil {
 		return result, err
 	}
-	if req.Action == domain.OperationPrepare || req.Action == domain.OperationBuild || req.Action == domain.OperationDeploy || req.Action == domain.OperationRollback || req.Action == domain.OperationRestoreSnapshot {
+	if req.Action == domain.OperationPrepare || req.Action == domain.OperationPrepareCompose && !req.ComposeFromGit || req.Action == domain.OperationBuild || req.Action == domain.OperationDeploy || req.Action == domain.OperationRollback || req.Action == domain.OperationRestoreSnapshot {
 		result.ChangedFiles = manifestDiff(manifest, target)
 	}
 	// The digest binds concrete file trees, targets, release and policy revision.

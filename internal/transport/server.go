@@ -47,6 +47,8 @@ type SubmitRequest struct {
 	PlanDigest               domain.Digest        `json:"plan_digest,omitempty"`
 	ConfirmDataCompatibility bool                 `json:"confirm_data_compatibility,omitempty"`
 	AcceptFileDrift          bool                 `json:"accept_file_drift,omitempty"`
+	ComposeFromGit           bool                 `json:"compose_from_git,omitempty"`
+	ConfirmComposeChange     bool                 `json:"confirm_compose_change,omitempty"`
 	RecoveryOperationID      domain.ID            `json:"recovery_operation_id,omitempty"`
 }
 
@@ -72,7 +74,7 @@ func (r SubmitRequest) Validate() error {
 		}
 	}
 	switch r.Action {
-	case domain.OperationStart, domain.OperationStop, domain.OperationRestart, domain.OperationPrepare, domain.OperationFetchSource, domain.OperationBuild, domain.OperationDeploy, domain.OperationSnapshot, domain.OperationRestoreSnapshot, domain.OperationRollback, domain.OperationRecover:
+	case domain.OperationStart, domain.OperationStop, domain.OperationRestart, domain.OperationPrepare, domain.OperationPrepareCompose, domain.OperationFetchSource, domain.OperationBuild, domain.OperationDeploy, domain.OperationSnapshot, domain.OperationRestoreSnapshot, domain.OperationRollback, domain.OperationRecover:
 	default:
 		return fmt.Errorf("unsupported operation action")
 	}
@@ -90,6 +92,12 @@ func (r SubmitRequest) Validate() error {
 	}
 	if r.AcceptFileDrift && r.Action != domain.OperationDeploy && r.Action != domain.OperationRollback {
 		return errors.New("accept_file_drift is only supported for deploy and rollback")
+	}
+	if r.ComposeFromGit && r.Action != domain.OperationPrepareCompose {
+		return errors.New("compose_from_git is only supported for prepare_compose")
+	}
+	if r.ConfirmComposeChange && r.Action != domain.OperationDeploy && r.Action != domain.OperationRollback {
+		return errors.New("confirm_compose_change is only supported for deploy and rollback")
 	}
 	if len(r.IdempotencyKey) == 0 || len(r.IdempotencyKey) > 128 || strings.TrimSpace(r.IdempotencyKey) != r.IdempotencyKey {
 		return fmt.Errorf("idempotency_key must contain 1..128 bytes without surrounding whitespace")
@@ -458,7 +466,7 @@ func decodeSubmit(data []byte, out *SubmitRequest) error {
 		}
 		seen[key] = true
 		switch key {
-		case "service_id", "action", "release_id", "idempotency_key", "initiator", "candidate_id", "snapshot_id", "plan_digest", "confirm_data_compatibility", "accept_file_drift", "recovery_operation_id":
+		case "service_id", "action", "release_id", "idempotency_key", "initiator", "candidate_id", "snapshot_id", "plan_digest", "confirm_data_compatibility", "accept_file_drift", "compose_from_git", "confirm_compose_change", "recovery_operation_id":
 		default:
 			return fmt.Errorf("unknown request field")
 		}
@@ -466,14 +474,20 @@ func decodeSubmit(data []byte, out *SubmitRequest) error {
 		if err != nil {
 			return fmt.Errorf("malformed request")
 		}
-		if key == "confirm_data_compatibility" || key == "accept_file_drift" {
+		switch key {
+		case "confirm_data_compatibility", "accept_file_drift", "compose_from_git", "confirm_compose_change":
 			value, ok := token.(bool)
 			if !ok {
 				return fmt.Errorf("confirmation must be a boolean")
 			}
-			if key == "accept_file_drift" {
+			switch key {
+			case "accept_file_drift":
 				out.AcceptFileDrift = value
-			} else {
+			case "compose_from_git":
+				out.ComposeFromGit = value
+			case "confirm_compose_change":
+				out.ConfirmComposeChange = value
+			default:
 				out.ConfirmDataCompatibility = value
 			}
 			continue

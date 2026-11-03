@@ -27,6 +27,22 @@ type recoveryRequest struct {
 	InputHash   domain.Digest           `json:"input_hash"`
 }
 
+type recoveryRuntime struct {
+	model  map[string]any
+	images []domain.ImageRef
+}
+
+// Configuration and image must match the same approved release. Matching
+// either property independently would accept an unapproved hybrid runtime.
+func (r recoveryRuntime) matches(c docker.Container, project string) bool {
+	for _, image := range r.images {
+		if image.Component == c.Component && string(image.ImageID) == c.ImageID {
+			return len(c.RuntimeIssues(r.model, project)) == 0
+		}
+	}
+	return false
+}
+
 func (m *Manager) previewRecovery(ctx context.Context, s domain.Service, st runtimeState, req transport.SubmitRequest, current domain.Manifest) (transport.PreviewResult, error) {
 	result := transport.PreviewResult{ServiceID: s.ID, Action: domain.OperationRecover, RecoveryOperationID: req.RecoveryOperationID, Targets: s.Targets, PolicyRevision: s.PolicyRevision, CurrentTreeDigest: current.Digest(), ChangedFiles: []transport.FileChange{}}
 	op, err := m.Store.GetOperation(ctx, req.RecoveryOperationID)
@@ -228,57 +244,74 @@ func (m *Manager) compensate(ctx context.Context, op domain.Operation, req trans
 			return errors.New("exact recovery image unavailable")
 		}
 	}
-	allowedImages := map[string]map[string]bool{}
-	for _, image := range release.Spec().Images {
-		allowedImages[image.Component] = map[string]bool{string(image.ImageID): true}
-	}
+	priorRuntime := recoveryRuntime{model: model, images: release.Spec().Images}
+	var targetRuntime recoveryRuntime
 	if op.Spec.ReleaseID != "" {
 		target, err := m.loadRelease(ctx, s, op.Spec.ReleaseID)
 		if err != nil {
 			return err
 		}
-		for _, image := range target.Spec().Images {
-			if allowedImages[image.Component] == nil {
-				return errors.New("target image component outside recovery point")
+		targetSpec := target.Spec()
+		targetRuntime = recoveryRuntime{model: model, images: targetSpec.Images}
+		if targetSpec.ConfigurationDigest != release.Spec().ConfigurationDigest {
+			if err := m.requireNoRuntimePortOverlay(ctx, s); err != nil {
+				return err
 			}
-			allowedImages[image.Component][string(image.ImageID)] = true
+			targetConfig, err := m.LoadConfiguration(ctx, targetSpec.ConfigurationDigest)
+			if err != nil {
+				return err
+			}
+			targetRuntime.model, err = m.runtimeConfiguration(ctx, s, targetConfig)
+			if err != nil {
+				return err
+			}
+			pinModelImages(targetRuntime.model, targetSpec.Images)
 		}
 	}
+	var original operationInput
+	confirmedComposeSwitch := (op.Spec.Kind == domain.OperationDeploy || op.Spec.Kind == domain.OperationRollback) &&
+		m.Store.Get(ctx, "operation_input", op.Spec.ID, &original) == nil &&
+		original.Plan.ComposeChange && original.Request.ConfirmComposeChange
 	actual, err := m.Engine.Inventory(ctx, s.ComposeProject)
 	if err != nil {
 		return err
 	}
-	if len(actual) != len(point.State.Containers) {
+	if len(actual) > len(point.State.Containers) || !confirmedComposeSwitch && len(actual) != len(point.State.Containers) {
 		return errors.New("runtime component count changed; administrator reconciliation required")
 	}
-	// Replacement IDs are possible after a partial Compose up. Each component must
-	// still have a registered role, unchanged persistent mounts and the frozen
-	// effective settings. Unmanaged dependency identities remain exact.
-	seen := map[string]bool{}
+	// Compose can leave a mix of old and new containers after a partial switch.
+	// Resolve each to a known release before stopping any of them.
+	matched := make(map[string]recoveryRuntime, len(actual))
 	for _, c := range actual {
-		if seen[c.Component] || !allowedImages[c.Component][c.ImageID] {
-			return errors.New("unapproved image or duplicate component prevents recovery")
+		if _, seen := matched[c.Component]; seen {
+			return errors.New("duplicate component prevents recovery")
 		}
-		seen[c.Component] = true
 		var ref *domain.ContainerRef
 		for i := range point.State.Containers {
 			if point.State.Containers[i].Component == c.Component {
 				ref = &point.State.Containers[i]
+				break
 			}
 		}
 		if ref == nil {
 			return errors.New("unknown recovery component")
 		}
-		if !hasTarget(s, c.Component) && c.ID != ref.ID {
+		target := hasTarget(s, c.Component)
+		if !target && c.ID != ref.ID {
 			return errors.New("dependency identity changed")
 		}
-		component := model["services"].(map[string]any)[c.Component].(map[string]any)
-		old := component["image"]
-		component["image"] = c.ImageID
-		issues := c.RuntimeIssues(model, s.ComposeProject)
-		component["image"] = old
-		if len(issues) > 0 {
-			return errors.New("runtime configuration drift prevents automatic recovery")
+		switch {
+		case priorRuntime.matches(c, s.ComposeProject):
+			matched[c.Component] = priorRuntime
+		case target && targetRuntime.matches(c, s.ComposeProject):
+			matched[c.Component] = targetRuntime
+		default:
+			return errors.New("runtime image or configuration drift prevents automatic recovery")
+		}
+	}
+	for _, ref := range point.State.Containers {
+		if _, present := matched[ref.Component]; !present && !missingComposeTargetRecoverable(s, model, ref.Component) {
+			return errors.New("missing dependency or unverified application mounts prevent automatic recovery")
 		}
 	}
 	current, err := filesystem.Observe(ctx, s.ProjectDirectory, s.ManagedPaths, nil)
@@ -288,8 +321,15 @@ func (m *Manager) compensate(ctx context.Context, op domain.Operation, req trans
 	if current.Digest() != plan.CurrentTreeDigest {
 		return errors.New("active files changed after recovery approval")
 	}
+	if confirmedComposeSwitch {
+		for _, c := range actual {
+			if hasTarget(s, c.Component) && c.State != "running" && c.State != "exited" && c.State != "created" {
+				return errors.New("unknown application state prevents automatic recovery")
+			}
+		}
+	}
 	for _, c := range actual {
-		if hasTarget(s, c.Component) {
+		if hasTarget(s, c.Component) && (!confirmedComposeSwitch || c.State == "running") {
 			if err := m.Engine.Stop(ctx, c.ID); err != nil {
 				return err
 			}
@@ -299,8 +339,13 @@ func (m *Manager) compensate(ctx context.Context, op domain.Operation, req trans
 	if err != nil {
 		return err
 	}
-	if err := confirmStopped(s, actual, stopped, model); err != nil {
+	if err := confirmStoppedIdentities(s, actual, stopped, confirmedComposeSwitch); err != nil {
 		return err
+	}
+	for _, c := range stopped {
+		if !matched[c.Component].matches(c, s.ComposeProject) {
+			return errors.New("runtime configuration changed during recovery stop")
+		}
 	}
 
 	content, _ := m.Snapshots.ContentPath(snapshot.ID)
@@ -330,6 +375,9 @@ func (m *Manager) compensate(ctx context.Context, op domain.Operation, req trans
 			if old.Component == c.Component {
 				if c.ImageID != string(old.ImageID) {
 					return errors.New("recovery image observation mismatch")
+				}
+				if !hasTarget(s, old.Component) && c.ID != old.ID {
+					return errors.New("dependency was unexpectedly recreated during recovery")
 				}
 				if issues := c.RuntimeIssues(model, s.ComposeProject); len(issues) > 0 {
 					return errors.New("recovery runtime settings mismatch")
@@ -414,12 +462,46 @@ func exactTargets(s domain.Service, items []docker.Container) error {
 	return nil
 }
 
+// Without a current container inspection, Compose could recreate a missing
+// volume or bind source as empty storage. The first revision-switch profile
+// only recreates absent targets whose approved model has no mounts to verify.
+func missingComposeTargetRecoverable(s domain.Service, model map[string]any, component string) bool {
+	if !hasTarget(s, component) {
+		return false
+	}
+	services, _ := model["services"].(map[string]any)
+	planned, ok := services[component].(map[string]any)
+	if !ok {
+		return false
+	}
+	for _, key := range []string{"volumes", "secrets", "configs"} {
+		if planned[key] != nil {
+			return false
+		}
+	}
+	return true
+}
+
 func confirmStopped(s domain.Service, before, after []docker.Container, model map[string]any) error {
+	if err := confirmStoppedIdentities(s, before, after, false); err != nil {
+		return err
+	}
+	for _, c := range after {
+		if len(c.RuntimeIssues(model, s.ComposeProject)) > 0 {
+			return errors.New("runtime configuration changed during stop")
+		}
+	}
+	return nil
+}
+
+func confirmStoppedIdentities(s domain.Service, before, after []docker.Container, allowPartial bool) error {
 	if len(before) != len(after) {
 		return errors.New("component count changed during stop")
 	}
-	if err := exactTargets(s, after); err != nil {
-		return err
+	if !allowPartial {
+		if err := exactTargets(s, after); err != nil {
+			return err
+		}
 	}
 	seen := map[string]bool{}
 	for _, current := range after {
@@ -427,32 +509,23 @@ func confirmStopped(s domain.Service, before, after []docker.Container, model ma
 			return errors.New("duplicate component during stop")
 		}
 		seen[current.Component] = true
+		var priorState string
 		found := false
 		for _, old := range before {
 			if old.Component == current.Component {
 				if old.ID != current.ID || old.ImageID != current.ImageID {
 					return errors.New("runtime identity changed during stop")
 				}
-				found = true
+				found, priorState = true, old.State
+				break
 			}
 		}
 		if !found {
 			return errors.New("unexpected component during stop")
 		}
-		if hasTarget(s, current.Component) && current.State != "exited" {
+		knownUnstarted := allowPartial && priorState == "created" && current.State == "created"
+		if hasTarget(s, current.Component) && current.State != "exited" && !knownUnstarted {
 			return errors.New("target is not confirmed stopped")
-		}
-		services, _ := model["services"].(map[string]any)
-		component, ok := services[current.Component].(map[string]any)
-		if !ok {
-			return errors.New("component outside frozen configuration")
-		}
-		original := component["image"]
-		component["image"] = current.ImageID
-		issues := current.RuntimeIssues(model, s.ComposeProject)
-		component["image"] = original
-		if len(issues) > 0 {
-			return errors.New("runtime configuration changed during stop")
 		}
 	}
 	return nil
