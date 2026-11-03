@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -64,7 +65,7 @@ func (m *Manager) buildRelease(ctx context.Context, s domain.Service, st runtime
 		_ = storage.RemoveStagingTree(context.WithoutCancel(ctx), stagingPath(m.Config.StateDirectory), filepath.Base(temp))
 	}()
 	content, _ := m.Snapshots.ContentPath(snapshot.ID)
-	if err := filesystem.MaterializeBuild(ctx, content, temp, snapshot.Manifest); err != nil {
+	if err := materializeReleaseBuild(ctx, s, snapshot, content, temp); err != nil {
 		return err
 	}
 	model, err := m.materializedConfiguration(c)
@@ -431,6 +432,19 @@ func (m *Manager) warmupObserved(ctx context.Context, s domain.Service) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+func materializeReleaseBuild(ctx context.Context, s domain.Service, snapshot domain.Snapshot, content, temp string) error {
+	var hostOnly []string
+	if snapshot.GitSource != nil {
+		hostOnly = snapshot.GitSource.HostComposeInputs
+		for _, name := range hostOnly {
+			if !slices.Contains(s.ComposeFiles, name) {
+				return fmt.Errorf("Git build exclusion %q is outside approved Compose inputs", name)
+			}
+		}
+	}
+	return filesystem.MaterializeBuild(ctx, content, temp, snapshot.Manifest, hostOnly...)
 }
 
 func (m *Manager) guardComposeInputs(ctx context.Context, s domain.Service, st runtimeState, candidate domain.Snapshot) error {
