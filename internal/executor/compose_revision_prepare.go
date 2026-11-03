@@ -116,6 +116,9 @@ func (m *Manager) previewComposeSwitch(ctx context.Context, s domain.Service, st
 		for _, change := range changes {
 			result.ComposeChanges = append(result.ComposeChanges, transport.ComposeResourceChange(change))
 		}
+		if err := m.checkComposePorts(ctx, s, old.Model, next.Model, composeTargetIDs(s, st.Containers)); err != nil {
+			return err
+		}
 	}
 	if result.ComposeChange {
 		return m.requireNoRuntimePortOverlay(ctx, s)
@@ -271,8 +274,11 @@ func (m *Manager) prepareComposeConfiguration(ctx context.Context, s domain.Serv
 	if len(changes) == 0 {
 		return current, currentDigest, nil
 	}
-	// The normalized candidate is only used to read the approved scalar
-	// changes. Vault references and all other model settings stay frozen.
+	if err := m.validateNewComposePorts(s, old, proposed); err != nil {
+		return Configuration{}, "", err
+	}
+	// Copy only the reviewed settings from the normalized candidate.
+	// Vault references and all other model settings stay frozen.
 	encoded, err := json.Marshal(current)
 	if err != nil {
 		return Configuration{}, "", err

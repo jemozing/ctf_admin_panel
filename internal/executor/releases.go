@@ -321,6 +321,11 @@ func (m *Manager) switchRelease(ctx context.Context, s domain.Service, st *runti
 	if err := m.checkDockerBudget(ctx, 0); err != nil {
 		return err
 	}
+	if spec.ConfigurationDigest != currentConfiguration {
+		if err := m.checkComposePorts(ctx, s, currentModel, model, composeTargetIDs(s, st.Containers)); err != nil {
+			return err
+		}
+	}
 	if _, err := jobs.New(m.Store).BeginMutation(ctx, op.Spec.ID, recoveryID); err != nil {
 		return err
 	}

@@ -35,7 +35,7 @@ class UnixConnection(http.client.HTTPConnection):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config',type=Path,default=ROOT/'var/executor.dev.json')
-    parser.add_argument('--compose-revision', action='store_true', help='Run the Compose revision scenario with the isolated fixture')
+    parser.add_argument('--compose-revision', action='store_true', help='Run the Compose revision and published port scenarios with the isolated fixture')
     args=parser.parse_args()
     run_id=uuid.uuid4().hex[:10]
     project='ctfm-release-'+run_id
@@ -68,7 +68,7 @@ def main():
             require(response.status==expected,f'RPC {method} {path}: HTTP{response.status} {data}')
             return data
         finally:connection.close()
-    def operation(action,**fields):
+    def operation(action,*,expected_state='succeeded',**fields):
         req={'service_id':service_id,'action':action,'initiator':'release-smoke','idempotency_key':uuid.uuid4().hex,**fields}
         preview=rpc('POST','/v1/preview',req)
         req['plan_digest']=preview['plan_digest']
@@ -77,7 +77,7 @@ def main():
         while time.monotonic()<deadline:
             value=rpc('GET','/v1/operations/'+op['spec']['id'])
             if value['state'] in ('succeeded','failed','requires_recovery','interrupted'):
-                require(value['state']=='succeeded',f'{action} failed: {value}')
+                require(value['state']==expected_state,f'{action} returned an unexpected state: {value}')
                 require(rpc('POST','/v1/operations',req,expected=202)['spec']['id']==op['spec']['id'],'idempotent retry created another operation')
                 return value
             time.sleep(.2)
@@ -182,6 +182,105 @@ def main():
             report['checks']['failed_compose_health_check_automatically_restores_previous_release'] = True
             app_source.write_text(text)
             source_compose.write_bytes(original_compose)
+
+            # The fixed URLs in the custom checks are for the original port.
+            # Test the migration with only the fixture's in-container Docker healthcheck.
+            checks_path = '/v1/services/' + service_id + '/checks'
+            checks = rpc('POST', checks_path, {
+                'expected_revision': rpc('GET', checks_path)['revision'],
+                'actor': 'release-smoke', 'confirmed': True, 'policy': {'checks': []},
+            })
+            with socket.socket() as allocation:
+                allocation.bind(('0.0.0.0', 0))
+                new_port = allocation.getsockname()[1]
+            require(new_port != published, 'port fixture requires different host ports')
+            port_compose = compose_text.replace(
+                f'        published: "{published}"\n        host_ip: 127.0.0.1\n',
+                f'        published: "{new_port}"\n',
+                1,
+            )
+            require(port_compose != compose_text, 'fixture port replacement seam missing')
+            source_compose.write_text(port_compose)
+            app_image = next(x['image_id'] for x in initial if x['component'] == 'app')
+            previous_ids = {x['id'] for x in rpc('GET', '/v1/services/' + service_id)['releases']}
+            operation('prepare_compose')
+            port_release = next(x for x in rpc('GET', '/v1/services/' + service_id)['releases'] if x['id'] not in previous_ids)
+            deploy_port = {
+                'service_id': service_id, 'action': 'deploy', 'release_id': port_release['id'],
+                'confirm_compose_change': True, 'confirm_data_compatibility': True,
+                'initiator': 'release-smoke', 'idempotency_key': uuid.uuid4().hex,
+            }
+            port_preview = rpc('POST', '/v1/preview', deploy_port)
+            port_change = next((x for x in port_preview['compose_changes'] if x['setting'] == 'ports'), {})
+            require(port_preview['compose_change'] and port_change.get('component') == 'app'
+                    and f'127.0.0.1:{published}' in port_change.get('before', '')
+                    and str(new_port) in port_change.get('after', ''), 'Compose preview did not show both published endpoints')
+            require(api(url, 'GET', '/flags/' + key)[1]['value'] == value, 'port preparation changed the current service')
+            require((work / 'compose.yaml').read_bytes() == original_compose, 'port preparation changed active YAML')
+
+            def check_occupied_port(request, port):
+                plan = rpc('POST', '/v1/preview', request)
+                before = json_command(cli + ['inventory', '--project', project])
+                starts = inspect_starts(docker, environment, [item['id'] for item in before])
+                contender = run(docker + ['run', '--detach', '--rm', '--publish', f'127.0.0.1:{port}:8080', app_image],
+                                environment=environment).stdout.strip()
+                try:
+                    preview_error = rpc('POST', '/v1/preview', request, expected=409)
+                    submit_error = rpc('POST', '/v1/operations', {**request, 'plan_digest': plan['plan_digest']}, expected=409)
+                    require(preview_error['code'] == submit_error['code'] == 'compose_port_conflict',
+                            'occupied port was not reported as a Compose port conflict')
+                    require(inspect_starts(docker, environment, list(starts)) == starts,
+                            'port conflict stopped or recreated a fixture container')
+                finally:
+                    run(docker + ['rm', '--force', contender], environment=environment)
+
+            def check_port_runtime(expected_port, public):
+                current = json_command(cli + ['inventory', '--project', project])
+                app = next(item for item in current if item['component'] == 'app')
+                db = next(item for item in current if item['component'] == 'database')
+                bindings = json_command(
+                    docker + ['inspect', '--format', '{{json (index .NetworkSettings.Ports "8080/tcp")}}', app['id']],
+                    environment=environment,
+                )
+                require(bindings and all(b['HostPort'] == str(expected_port) for b in bindings), 'wrong published port')
+                if public:
+                    require(any(b['HostIp'] == '0.0.0.0' for b in bindings), 'Compose deploy did not publish on the wildcard address')
+                else:
+                    require([b['HostIp'] for b in bindings] == ['127.0.0.1'], 'rollback did not restore the loopback binding')
+                require(db['id'] == database['id'] and db['mounts'] == database['mounts'], 'port switch changed the database container or mount')
+                endpoint = f'http://127.0.0.1:{expected_port}'
+                require(api(endpoint, 'GET', '/flags/' + key)[1]['value'] == value, 'port switch lost the persistent flag')
+
+            check_occupied_port(deploy_port, new_port)
+            report['checks']['compose_port_conflict_rejects_deploy_and_stale_plan_before_mutation'] = True
+            operation('deploy', release_id=port_release['id'], confirm_data_compatibility=True, confirm_compose_change=True)
+            check_port_runtime(new_port, public=True)
+            require((work / 'compose.yaml').read_bytes() == source_compose.read_bytes(), 'approved port YAML did not become active')
+            report['checks']['compose_deploy_switches_to_wildcard_port_and_preserves_data'] = True
+
+            rollback_port = {**deploy_port, 'action': 'rollback', 'release_id': baseline, 'idempotency_key': uuid.uuid4().hex}
+            check_occupied_port(rollback_port, published)
+            report['checks']['compose_port_conflict_rejects_rollback_before_mutation'] = True
+            operation('rollback', release_id=baseline, confirm_data_compatibility=True, confirm_compose_change=True)
+            check_port_runtime(published, public=False)
+            require((work / 'compose.yaml').read_bytes() == original_compose, 'port rollback did not restore previous YAML')
+            report['checks']['compose_rollback_restores_loopback_port_and_preserves_data'] = True
+            source_compose.write_bytes(original_compose)
+            rpc('POST', checks_path, {
+                'expected_revision': checks['revision'], 'actor': 'release-smoke',
+                'confirmed': True, 'policy': {'checks': policy['checks']},
+            })
+            # The app can start on the new port but its configured HTTP checks
+            # now intentionally request the old port. Recovery must rebind it.
+            failed_port = operation('deploy', expected_state='failed', release_id=port_release['id'],
+                                    confirm_data_compatibility=True, confirm_compose_change=True)
+            require(failed_port['outcome']['returned_to_previous'], 'failed port switch did not automatically recover')
+            events = rpc('GET', '/v1/operations/' + failed_port['spec']['id'] + '/events')
+            require(any(event['kind'] == 'release_observed' and event['message'] == port_release['id'] for event in events),
+                    'the new publication was never observed before recovery')
+            check_port_runtime(published, public=False)
+            require((work / 'compose.yaml').read_bytes() == original_compose, 'port recovery did not restore previous YAML')
+            report['checks']['failed_port_health_check_automatically_restores_binding_and_data'] = True
         for _ in range(6):operation('snapshot')
         details=rpc('GET','/v1/services/'+service_id)
         require(len([x for x in details['snapshots'] if x['purpose']=='manual'])==3,'manual snapshots did not rotate to three')

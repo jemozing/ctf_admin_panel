@@ -199,7 +199,7 @@ function ActionDialog({action,details,user,recoveryOperation,snapshotID,onClose,
       <label>Источник Compose<select disabled={busy} value={composeFromGit?'git':'workspace'} onChange={event=>setComposeFromGit(event.target.value==='git')}>
         <option value="git" disabled={!details.capabilities?.fetch_source}>Из Git</option><option value="workspace">Из рабочей папки</option>
       </select></label>
-      <p className="section-note">Панель проверит изменения и соберёт новый релиз. В этом режиме можно менять лимиты CPU, памяти и числа процессов. Состав компонентов, порты, сети и монтирования сохраняются. Готовый релиз можно применить отдельно.</p>
+      <p className="section-note">Панель проверит изменения и соберёт новый релиз. Можно менять лимиты CPU, памяти и числа процессов, а также адрес и порт хоста у существующих публикаций TCP или UDP. Готовый релиз можно применить отдельно.</p>
     </>}
     {selectsRelease&&<label>Целевой релиз<select disabled={busy} value={release} onChange={event=>{setAcceptDrift(false);setRelease(event.target.value)}}>{options.map(value=><option key={value.id} value={value.id}>{value.id} · {time(value.created_at)}</option>)}</select></label>}
     {loading&&<div className="loading-line"><RefreshCw size={16} className="spin"/>Проверка файлов, образов и политики…</div>}{error&&<Notice variant="error">{error}</Notice>}
@@ -224,15 +224,17 @@ function ActionDialog({action,details,user,recoveryOperation,snapshotID,onClose,
 }
 
 function ComposeChangeReview({preview,admin,confirmed,onConfirm}:{preview:Preview;admin:boolean;confirmed:boolean;onConfirm:(value:boolean)=>void}){
-  const labels:Record<string,string>={cpus:'CPU',mem_limit:'Память',pids_limit:'Процессы'}
+  const labels:Record<string,string>={cpus:'CPU',mem_limit:'Память',pids_limit:'Процессы',ports:'Публикация портов'}
   const changes=preview.compose_changes||[]
+  const changesPorts=changes.some(change=>change.setting==='ports')
   return <section>
     <h3>Смена Compose</h3>
-    {changes.length>0&&<div className="table-wrap"><table><thead><tr><th>Компонент</th><th>Лимит</th><th>Сейчас</th><th>После применения</th></tr></thead><tbody>
-      {changes.map(change=><tr key={`${change.component}:${change.setting}`}><td>{change.component}</td><td>{labels[change.setting]||change.setting}</td><td>{change.before||'—'}</td><td>{change.after||'—'}</td></tr>)}
+    {changes.length>0&&<div className="table-wrap"><table><thead><tr><th>Компонент</th><th>Настройка</th><th>Сейчас</th><th>После переключения</th></tr></thead><tbody>
+      {changes.map(change=><tr key={`${change.component}:${change.setting}`}><td>{change.component}</td><td>{labels[change.setting]||change.setting}</td><td><code>{change.before||'—'}</code></td><td><code>{change.after||'—'}</code></td></tr>)}
     </tbody></table></div>}
-    <p className="section-note">Панель остановит затронутые контейнеры и запустит их с выбранной конфигурацией. Порты и хранилища сохраняются.</p>
-    {admin?<label className="checkbox-label"><input type="checkbox" checked={confirmed} onChange={event=>onConfirm(event.target.checked)}/><span>Подтверждаю смену Compose и временный перерыв в работе сервиса.</span></label>:<Notice variant="warning">Смену Compose подтверждает администратор.</Notice>}
+    <p className="section-note">Панель остановит затронутые контейнеры и запустит их с выбранной конфигурацией. Постоянные данные сохраняются в существующих хранилищах.</p>
+    {changesPorts&&<Notice variant="warning">Изменится адрес или порт доступа к сервису. Звёздочка обозначает адрес публикации по умолчанию Docker.</Notice>}
+    {admin?<label className="checkbox-label"><input type="checkbox" checked={confirmed} onChange={event=>onConfirm(event.target.checked)}/><span>{changesPorts?'Подтверждаю смену Compose, изменение доступа по сети и временный перерыв в работе сервиса.':'Подтверждаю смену Compose и временный перерыв в работе сервиса.'}</span></label>:<Notice variant="warning">Смену Compose подтверждает администратор.</Notice>}
   </section>
 }
 
