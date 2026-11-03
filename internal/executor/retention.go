@@ -191,6 +191,14 @@ func (m *Manager) retentionPlan(ctx context.Context, now time.Time, pressure boo
 		}
 		addPin(p.ProtectedReleases, op.Spec.ReleaseID, "operation:"+string(op.Spec.ID))
 		addPin(p.ProtectedSnapshots, op.RecoveryPointID, "recovery:"+string(op.Spec.ID))
+		if op.Spec.Kind == domain.OperationPrepareCompose {
+			var candidate domain.ID
+			if err := m.Store.Get(ctx, "compose_preparation", op.Spec.ID, &candidate); err == nil {
+				addPin(p.ProtectedSnapshots, candidate, "compose_preparation:"+string(op.Spec.ID))
+			} else if !errors.Is(err, store.ErrNotFound) {
+				return p, err
+			}
+		}
 		if op.RecoveryPointID != "" {
 			var point recoveryPoint
 			err := m.Store.Get(ctx, "recovery_point", op.RecoveryPointID, &point)

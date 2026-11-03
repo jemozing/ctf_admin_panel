@@ -83,6 +83,9 @@ func (m *Manager) Submit(ctx context.Context, principal transport.Principal, req
 	if req.PlanDigest == "" || req.PlanDigest != plan.PlanDigest {
 		return domain.Operation{}, fmt.Errorf("%w: review a fresh operation preview before submitting", store.ErrConflict)
 	}
+	if plan.ComposeChange && !req.ConfirmComposeChange {
+		return domain.Operation{}, fmt.Errorf("%w: confirm the reviewed Compose configuration change before switching", store.ErrConflict)
+	}
 	if plan.DataCompatibilityRequired && !req.ConfirmDataCompatibility {
 		return domain.Operation{}, errors.New("confirm persistent data compatibility with the selected release")
 	}
@@ -166,7 +169,7 @@ func (m *Manager) execute(ctx context.Context, op domain.Operation) error {
 	if op.Spec.Kind == domain.OperationFetchSource {
 		return m.fetchGitSource(ctx, s, st, op)
 	}
-	configDigest, err := m.Store.GetServiceConfiguration(ctx, s.ID, s.PolicyRevision)
+	configDigest, err := m.activeConfigurationDigest(ctx, s, st)
 	if err != nil {
 		return err
 	}
@@ -190,6 +193,8 @@ func (m *Manager) execute(ctx context.Context, op domain.Operation) error {
 		return err
 	}
 	switch op.Spec.Kind {
+	case domain.OperationPrepareCompose:
+		return m.prepareComposeRelease(ctx, s, st, op, input, configuration, configDigest)
 	case domain.OperationRestoreSnapshot:
 		return m.restoreSnapshotCandidate(ctx, s, &st, op, input.Plan.SnapshotID)
 	case domain.OperationSnapshot:
@@ -300,7 +305,7 @@ func (m *Manager) execute(ctx context.Context, op domain.Operation) error {
 		}
 		return m.event(ctx, op.Spec.ID, "observed", "target container states confirmed; game checker is independent")
 	case domain.OperationDeploy, domain.OperationRollback:
-		return m.switchRelease(ctx, s, &st, op, input, configuration, actual)
+		return m.switchRelease(ctx, s, &st, op, input, configDigest, model, actual)
 	}
 	return errors.New("operation is not implemented")
 }

@@ -321,3 +321,24 @@ func TestServeRestartInvalidatesSessions(t *testing.T) {
 		t.Fatal("serving a restarted process retained old session")
 	}
 }
+
+func TestComposeRevisionPreparationAndSwitchRequireAdmin(t *testing.T) {
+	s, _ := testServer(t)
+	admin, csrf, _ := loginAs(t, s, "admin")
+	createAccount(t, s, admin, csrf, "compose-defender", RoleDefender)
+	defender, token, _ := loginAs(t, s, "compose-defender")
+	for _, endpoint := range []string{"/api/preview", "/api/operations"} {
+		for _, body := range []map[string]any{
+			{"action": "prepare_compose", "compose_from_git": true},
+			{"action": "deploy", "release_id": "release-new", "confirm_compose_change": true},
+			{"action": "rollback", "release_id": "release-old", "confirm_compose_change": true},
+		} {
+			body["service_id"] = "service-test"
+			body["idempotency_key"] = "compose-admin-only"
+			res := request(t, s, "POST", endpoint, body, defender, token)
+			if res.Code != http.StatusForbidden {
+				t.Fatalf("%s accepted %s for Defender: %d %s", endpoint, body["action"], res.Code, res.Body)
+			}
+		}
+	}
+}

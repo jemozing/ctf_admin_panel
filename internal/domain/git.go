@@ -16,6 +16,7 @@ type GitProvenance struct {
 	Subdirectory      string   `json:"subdirectory,omitempty"`
 	Commit            string   `json:"commit"`
 	SourceRevision    uint64   `json:"source_revision"`
+	ComposeRevision   bool     `json:"compose_revision,omitempty"`
 	HostComposeInputs []string `json:"host_compose_inputs,omitempty"`
 }
 

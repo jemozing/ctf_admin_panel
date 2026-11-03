@@ -31,12 +31,9 @@ func (m *Manager) preserveGitComposeInputs(ctx context.Context, s domain.Service
 			hasManagedFiles = true
 		}
 	}
-	baseline, err := m.loadSnapshot(ctx, st.BaselineID)
+	baseline, err := m.approvedComposeSnapshot(ctx, s, st)
 	if err != nil {
 		return nil, err
-	}
-	if baseline.Purpose != domain.SnapshotBaseline || baseline.ServiceID != s.ID || baseline.FileMapRevision != s.FileMapRevision {
-		return nil, errors.New("invalid baseline for frozen Compose inputs")
 	}
 	entries := make(map[string]domain.ManifestEntry)
 	for _, entry := range baseline.Manifest.Entries() {

@@ -21,6 +21,13 @@ func (m *Manager) previewSpace(action domain.OperationKind, current, target doma
 		v.SnapshotBytes = snapshotCost(current)
 	case domain.OperationFetchSource:
 		v.EstimateKnown = false
+	case domain.OperationPrepareCompose:
+		v.EstimateKnown = len(target.Entries()) > 0
+		if v.EstimateKnown {
+			v.SnapshotBytes = snapshotCost(target)
+			v.StagingBytes = uint64(target.TotalBytes()) + 4096
+		}
+		v.DockerReserveBytes = p.BuildReserveBytes
 	case domain.OperationBuild:
 		v.StagingBytes = uint64(target.TotalBytes()) + 4096
 		v.DockerReserveBytes = p.BuildReserveBytes

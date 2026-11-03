@@ -35,6 +35,7 @@ class UnixConnection(http.client.HTTPConnection):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config',type=Path,default=ROOT/'var/executor.dev.json')
+    parser.add_argument('--compose-revision', action='store_true', help='Run the Compose revision scenario with the isolated fixture')
     args=parser.parse_args()
     run_id=uuid.uuid4().hex[:10]
     project='ctfm-release-'+run_id
@@ -111,6 +112,76 @@ def main():
         baseline=details['current_release_id']
         require(baseline and len(details['releases'])==1,'baseline/imported release missing')
         report['checks']['baseline_retains_exact_images']=True
+        if args.compose_revision:
+            source_compose = source / 'compose.yaml'
+            original_compose = (work / 'compose.yaml').read_bytes()
+            source_compose.write_text(compose_text.replace('  app:\n', '  app:\n    cpus: 0.25\n    mem_limit: 128m\n', 1))
+            (source / 'code/VERSION').write_text('compose-revision-' + run_id + '\n')
+            operation('prepare_compose')
+            details = rpc('GET', '/v1/services/' + service_id)
+            new = next(item for item in details['releases'] if item['id'] != baseline)
+            prepared_inventory = json_command(cli + ['inventory', '--project', project])
+            require({item['id'] for item in prepared_inventory} == {item['id'] for item in initial}, 'Compose build changed running containers')
+            require((work / 'compose.yaml').read_bytes() == original_compose, 'Compose build changed active YAML')
+            report['checks']['compose_preparation_keeps_current_runtime'] = True
+
+            request = {'service_id': service_id, 'action': 'deploy', 'release_id': new['id'],
+                       'confirm_data_compatibility': True, 'initiator': 'release-smoke', 'idempotency_key': uuid.uuid4().hex}
+            preview = rpc('POST', '/v1/preview', request)
+            require(preview['compose_change'] and {x['setting'] for x in preview['compose_changes']} == {'cpus', 'mem_limit'}, 'Compose switch preview lacks the reviewed limits')
+            request['plan_digest'] = preview['plan_digest']
+            refusal = rpc('POST', '/v1/operations', request, expected=409)
+            require(refusal['code'] == 'conflict', 'Compose change accepted without confirmation')
+            operation('deploy', release_id=new['id'], confirm_data_compatibility=True, confirm_compose_change=True)
+            require(wait_ready(compose, environment) == url, 'Compose revision changed the published endpoint')
+            updated = rpc('GET', '/v1/services/' + service_id)
+            require(updated['current_release_id'] == new['id'], 'Compose revision was not recorded as active')
+            app_id = next(item['id'] for item in updated['containers'] if item['component'] == 'app')
+            limits = run(docker + ['inspect', '--format', '{{.HostConfig.NanoCpus}} {{.HostConfig.Memory}}', app_id], environment=environment).stdout.strip()
+            require(limits == '250000000 134217728', 'effective Docker resource limits do not match the reviewed Compose')
+            require((work / 'compose.yaml').read_bytes() == source_compose.read_bytes(), 'approved YAML did not become active')
+            require(api(url, 'GET', '/version')[1] != old_version, 'new Compose release did not serve the prepared code')
+            require(api(url, 'GET', '/flags/' + key)[1]['value'] == value, 'Compose Deploy lost the persistent flag')
+            report['checks']['compose_deploy_switches_config_on_same_port_and_preserves_flag'] = True
+            operation('prepare')
+            current = rpc('GET', '/v1/services/' + service_id)
+            operation('build', candidate_id=current['candidate_id'])
+            report['checks']['ordinary_build_accepts_current_approved_compose'] = True
+
+            operation('rollback', release_id=baseline, confirm_data_compatibility=True, confirm_compose_change=True)
+            require(wait_ready(compose, environment) == url, 'Compose rollback changed the published endpoint')
+            require((work / 'compose.yaml').read_bytes() == original_compose, 'rollback did not restore previous YAML')
+            require(api(url, 'GET', '/version')[1] == old_version, 'rollback did not restore previous code')
+            require(api(url, 'GET', '/flags/' + key)[1]['value'] == value, 'Compose rollback lost the persistent flag')
+            recovered = json_command(cli + ['inventory', '--project', project])
+            require(next(x for x in recovered if x['component'] == 'database')['id'] == database['id'], 'Compose switch recreated the database')
+            require(next(x for x in recovered if x['component'] == 'app')['image_id'] == next(x for x in initial if x['component'] == 'app')['image_id'], 'rollback did not restore exact application image')
+            report['checks']['compose_rollback_restores_yaml_image_and_data'] = True
+
+            app_source = source / 'code/app.py'
+            text = app_source.read_text()
+            require('"version": config.version_file' in text, 'fixture failure seam missing')
+            app_source.write_text(text.replace('"version": config.version_file', '"broken": config.version_file'))
+            source_compose.write_text(source_compose.read_text().replace('cpus: 0.25', 'cpus: 0.5'))
+            previous_ids = {x['id'] for x in rpc('GET', '/v1/services/' + service_id)['releases']}
+            operation('prepare_compose')
+            bad = next(x for x in rpc('GET', '/v1/services/' + service_id)['releases'] if x['id'] not in previous_ids)
+            request.update(release_id=bad['id'], idempotency_key=uuid.uuid4().hex, confirm_compose_change=True)
+            request['plan_digest'] = rpc('POST', '/v1/preview', request)['plan_digest']
+            failed = rpc('POST', '/v1/operations', request, expected=202)
+            deadline = time.monotonic() + 140
+            while time.monotonic() < deadline:
+                outcome = rpc('GET', '/v1/operations/' + failed['spec']['id'])
+                if outcome['state'] in ('failed', 'requires_recovery', 'succeeded'):
+                    break
+                time.sleep(.25)
+            require(outcome['state'] == 'failed' and outcome['outcome']['returned_to_previous'], 'failed Compose check did not automatically restore the previous release')
+            require((work / 'compose.yaml').read_bytes() == original_compose, 'automatic recovery left new YAML active')
+            require(api(url, 'GET', '/version')[1] == old_version, 'automatic recovery left failed code active')
+            require(api(url, 'GET', '/flags/' + key)[1]['value'] == value, 'automatic recovery lost the persistent flag')
+            report['checks']['failed_compose_health_check_automatically_restores_previous_release'] = True
+            app_source.write_text(text)
+            source_compose.write_bytes(original_compose)
         for _ in range(6):operation('snapshot')
         details=rpc('GET','/v1/services/'+service_id)
         require(len([x for x in details['snapshots'] if x['purpose']=='manual'])==3,'manual snapshots did not rotate to three')
@@ -120,9 +191,10 @@ def main():
         (source/'code/VERSION').write_text('release-'+run_id+'\n')
         operation('prepare')
         details=rpc('GET','/v1/services/'+service_id)
+        existing_ids={x['id'] for x in details['releases']}
         operation('build',candidate_id=details['candidate_id'])
         details=rpc('GET','/v1/services/'+service_id)
-        candidate=next(x for x in details['releases'] if x['id']!=baseline)
+        candidate=next(x for x in details['releases'] if x['id'] not in existing_ids)
         require(api(url,'GET','/version')[1]==old_version,'build changed active version')
         report['checks']['prepare_build_do_not_change_active']=True
         operation('deploy',release_id=candidate['id'],confirm_data_compatibility=True)

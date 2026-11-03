@@ -128,7 +128,7 @@ func (m *Manager) detailObservations(ctx context.Context, s domain.Service, st r
 // Resolve frozen file references for read-only inspection. Unlike runtime
 // materialization, a status request must not create files or directories.
 func (m *Manager) observationConfiguration(ctx context.Context, s domain.Service) (map[string]any, error) {
-	digest, err := m.Store.GetServiceConfiguration(ctx, s.ID, s.PolicyRevision)
+	digest, err := m.currentConfigurationDigest(ctx, s)
 	if err != nil {
 		return nil, err
 	}

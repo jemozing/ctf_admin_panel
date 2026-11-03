@@ -15,6 +15,7 @@ const (
 	OperationStop             OperationKind  = "stop"
 	OperationRestart          OperationKind  = "restart"
 	OperationPrepare          OperationKind  = "prepare"
+	OperationPrepareCompose   OperationKind  = "prepare_compose"
 	OperationFetchSource      OperationKind  = "fetch_source"
 	OperationBuild            OperationKind  = "build"
 	OperationDeploy           OperationKind  = "deploy"
@@ -61,7 +62,7 @@ func (s OperationSpec) Validate() error {
 		}
 	}
 	switch s.Kind {
-	case OperationStart, OperationStop, OperationRestart, OperationPrepare, OperationFetchSource, OperationBuild, OperationDeploy, OperationSnapshot, OperationRestoreSnapshot, OperationRollback, OperationRecover:
+	case OperationStart, OperationStop, OperationRestart, OperationPrepare, OperationPrepareCompose, OperationFetchSource, OperationBuild, OperationDeploy, OperationSnapshot, OperationRestoreSnapshot, OperationRollback, OperationRecover:
 	default:
 		return fmt.Errorf("unknown operation kind")
 	}

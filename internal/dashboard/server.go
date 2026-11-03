@@ -501,6 +501,10 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request, current session)
 	if !decodeBody(w, r, &input) {
 		return
 	}
+	if current.User.Role != RoleAdmin && (input.Action == domain.OperationPrepareCompose || input.ConfirmComposeChange) {
+		s.deny(w, r, current.User.ID)
+		return
+	}
 	// The executor receives authenticated user identity only from the server.
 	input.Initiator = domain.ID(current.User.ID)
 	if err := input.Validate(); err != nil {

@@ -423,7 +423,7 @@ func (m *Manager) proxyServiceTargets(ctx context.Context, s domain.Service) ([]
 	if e != nil {
 		return nil, binding, e
 	}
-	digest, e := m.Store.GetServiceConfiguration(ctx, s.ID, s.PolicyRevision)
+	digest, e := m.activeConfigurationDigest(ctx, s, st)
 	if e != nil {
 		return nil, binding, e
 	}

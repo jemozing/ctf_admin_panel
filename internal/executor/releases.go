@@ -45,8 +45,10 @@ func (m *Manager) buildRelease(ctx context.Context, s domain.Service, st runtime
 	if snapshot.FileMapRevision != s.FileMapRevision {
 		return errors.New("candidate file map is stale")
 	}
-	if err := m.guardComposeInputs(ctx, s, st, snapshot); err != nil {
-		return err
+	if op.Spec.Kind != domain.OperationPrepareCompose {
+		if err := m.guardComposeInputs(ctx, s, st, snapshot); err != nil {
+			return err
+		}
 	}
 	if err := ensureStaging(m.Config.StateDirectory); err != nil {
 		return err
@@ -229,7 +231,7 @@ func (m *Manager) materializedConfiguration(c Configuration) (map[string]any, er
 	}
 	return model, nil
 }
-func (m *Manager) switchRelease(ctx context.Context, s domain.Service, st *runtimeState, op domain.Operation, input operationInput, c Configuration, actual []docker.Container) error {
+func (m *Manager) switchRelease(ctx context.Context, s domain.Service, st *runtimeState, op domain.Operation, input operationInput, currentConfiguration domain.Digest, currentModel map[string]any, actual []docker.Container) error {
 	if st.CurrentReleaseID == "" || st.ActiveSnapshotID == "" {
 		return errors.New("baseline and imported release are required before switching")
 	}
@@ -238,6 +240,23 @@ func (m *Manager) switchRelease(ctx context.Context, s domain.Service, st *runti
 		return err
 	}
 	spec := release.Spec()
+	if input.Plan.ComposeChange || spec.ConfigurationDigest != currentConfiguration {
+		if !input.Request.ConfirmComposeChange {
+			return errors.New("confirm the reviewed Compose configuration change before switching")
+		}
+		if err := m.requireNoRuntimePortOverlay(ctx, s); err != nil {
+			return err
+		}
+	}
+	configuration, err := m.LoadConfiguration(ctx, spec.ConfigurationDigest)
+	if err != nil {
+		return err
+	}
+	model, err := m.runtimeConfiguration(ctx, s, configuration)
+	if err != nil {
+		return err
+	}
+	pinModelImages(model, spec.Images)
 	next, err := m.loadSnapshot(ctx, spec.SnapshotID)
 	if err != nil {
 		return err
@@ -297,11 +316,6 @@ func (m *Manager) switchRelease(ctx context.Context, s domain.Service, st *runti
 		}
 	}
 
-	model, err := m.runtimeConfiguration(ctx, s, c)
-	if err != nil {
-		return err
-	}
-	pinModelImages(model, spec.Images)
 	// Preserve the already approved actual volume identities. Neither `down` nor
 	// a dependency service is part of the application recreation command.
 	if err := m.checkDockerBudget(ctx, 0); err != nil {
@@ -321,7 +335,7 @@ func (m *Manager) switchRelease(ctx context.Context, s domain.Service, st *runti
 	if err != nil {
 		return err
 	}
-	if err := confirmStopped(s, actual, stopped, model); err != nil {
+	if err := confirmStopped(s, actual, stopped, currentModel); err != nil {
 		return err
 	}
 
@@ -329,7 +343,7 @@ func (m *Manager) switchRelease(ctx context.Context, s domain.Service, st *runti
 	if err := filesystem.Apply(ctx, content, s.ProjectDirectory, previous.Manifest, next.Manifest, s.ManagedPaths, filesystem.ApplyOptions{ApplicationsStopped: true, PreserveOwnership: !m.Config.Development}); err != nil {
 		return err
 	}
-	composeErr := m.composeActionWithDiagnostics(ctx, s, op.Spec.ID, c, model, "up", s.Targets, nil)
+	composeErr := m.composeActionWithDiagnostics(ctx, s, op.Spec.ID, configuration, model, "up", s.Targets, nil)
 	observationErr := m.recordRuntimeSwitchObservation(ctx, s, op.Spec.ID, spec.ID, composeErr == nil)
 	if composeErr != nil || observationErr != nil {
 		return errors.Join(composeErr, observationErr)
@@ -448,7 +462,7 @@ func materializeReleaseBuild(ctx context.Context, s domain.Service, snapshot dom
 }
 
 func (m *Manager) guardComposeInputs(ctx context.Context, s domain.Service, st runtimeState, candidate domain.Snapshot) error {
-	baseline, err := m.loadSnapshot(ctx, st.BaselineID)
+	baseline, err := m.approvedComposeSnapshot(ctx, s, st)
 	if err != nil {
 		return err
 	}

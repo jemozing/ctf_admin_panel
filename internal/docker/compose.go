@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -51,16 +52,16 @@ type ComposeReport struct {
 }
 
 type limitedBuffer struct {
-	bytes.Buffer
+	buffer    bytes.Buffer
 	limit     int
 	truncated bool
 }
 
 func (b *limitedBuffer) Write(p []byte) (int, error) {
 	n := len(p)
-	free := b.limit - b.Len()
+	free := b.limit - b.buffer.Len()
 	if free > 0 {
-		_, _ = b.Buffer.Write(p[:min(free, n)])
+		_, _ = b.buffer.Write(p[:min(free, n)])
 	}
 	if n > free {
 		b.truncated = true
@@ -89,6 +90,24 @@ func ComposeVersion(ctx context.Context, c config.Config) (string, error) {
 }
 
 func Normalize(ctx context.Context, c config.Config, input ComposeInput) (ComposeReport, error) {
+	return normalize(ctx, c, input, nil)
+}
+
+// NormalizeWithComposeFiles uses immutable candidate bytes for every registered
+// Compose file. Project-relative paths still resolve against the active project.
+func NormalizeWithComposeFiles(ctx context.Context, c config.Config, input ComposeInput, overrides map[string][]byte) (ComposeReport, error) {
+	if len(overrides) == 0 || len(overrides) != len(input.Files) {
+		return ComposeReport{}, errors.New("candidate must supply every registered Compose file")
+	}
+	for name := range overrides {
+		if name == ".env" || filepath.Clean(name) != name || !slices.Contains(input.Files, name) {
+			return ComposeReport{}, errors.New("candidate Compose file is outside the registered file set")
+		}
+	}
+	return normalize(ctx, c, input, overrides)
+}
+
+func normalize(ctx context.Context, c config.Config, input ComposeInput, overrides map[string][]byte) (ComposeReport, error) {
 	report := ComposeReport{Input: input, Components: []Component{}, Issues: []Issue{}}
 	if err := c.CheckPath(input.ProjectDirectory, false); err != nil {
 		return report, err
@@ -176,29 +195,23 @@ func Normalize(ctx context.Context, c config.Config, input ComposeInput) (Compos
 		if !filepath.IsLocal(name) || name == "." || strings.Contains(name, "\\") {
 			return report, errors.New("Compose file must be project-relative")
 		}
-		f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-		if err != nil {
-			return report, err
-		}
-		info, err := f.Stat()
-		if err != nil {
-			f.Close()
-			return report, err
-		}
-		if !info.Mode().IsRegular() {
-			f.Close()
-			return report, errors.New("Compose YAML must be a regular file")
-		}
-		raw, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
-		f.Close()
-		if err != nil {
-			return report, err
+		raw, overridden := overrides[name]
+		if !overridden {
+			raw, err = readComposeYAML(root, name)
+			if err != nil {
+				return report, err
+			}
 		}
 		if len(raw) > 1<<20 {
 			return report, errors.New("Compose file exceeds 1 MiB")
 		}
 		var document map[string]any
-		if err := yaml.Unmarshal(raw, &document); err != nil {
+		if overridden {
+			document, err = decodeCandidateCompose(raw)
+			if err != nil {
+				return report, fmt.Errorf("invalid or unsupported Compose YAML in %s", name)
+			}
+		} else if err := yaml.Unmarshal(raw, &document); err != nil {
 			return report, fmt.Errorf("invalid Compose YAML in %s", name)
 		}
 		if err := preflightYAML(document, input.ProjectDirectory); err != nil {
@@ -284,7 +297,7 @@ func Normalize(ctx context.Context, c config.Config, input ComposeInput) (Compos
 	// Compose parse, even in JSON map keys. Store effective literal values so
 	// inspection, secret freezing and configuration digests match the container.
 	// ComposeAction re-escapes values only when emitting a new Compose input.
-	literal := bytes.ReplaceAll(stdout.Bytes(), []byte("$$"), []byte("$"))
+	literal := bytes.ReplaceAll(stdout.buffer.Bytes(), []byte("$$"), []byte("$"))
 	if err := json.Unmarshal(literal, &normalized); err != nil {
 		return report, errors.New("Compose returned invalid JSON")
 	}
@@ -299,9 +312,54 @@ func Normalize(ctx context.Context, c config.Config, input ComposeInput) (Compos
 			}
 		}
 	}
+	if err := normalizeDeployLimits(normalized); err != nil {
+		return report, err
+	}
 	report = Analyze(input, normalized)
 	report.PrivateInputs = privateInputs
 	return report, nil
+}
+
+func readComposeYAML(root *os.Root, name string) ([]byte, error) {
+	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("Compose YAML must be a regular file")
+	}
+	return io.ReadAll(io.LimitReader(f, (1<<20)+1))
+}
+
+func decodeCandidateCompose(raw []byte) (map[string]any, error) {
+	var document map[string]any
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	var node yaml.Node
+	if err := decoder.Decode(&node); err != nil {
+		return nil, err
+	}
+	if err := decoder.Decode(&yaml.Node{}); err != io.EOF {
+		return nil, errors.New("exactly one Compose YAML document is required")
+	}
+	if hasCustomYAMLTag(&node) {
+		return nil, errors.New("custom Compose YAML tags are outside the candidate profile")
+	}
+	if err := node.Decode(&document); err != nil {
+		return nil, err
+	}
+	return document, nil
+}
+
+func hasCustomYAMLTag(node *yaml.Node) bool {
+	if node.Tag != "" && !strings.HasPrefix(node.Tag, "!!") {
+		return true
+	}
+	return slices.ContainsFunc(node.Content, hasCustomYAMLTag)
 }
 
 func preflightYAML(doc map[string]any, root string) error {
