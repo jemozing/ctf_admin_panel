@@ -2,7 +2,7 @@ import {useCallback,useEffect,useRef,useState} from 'react'
 import type {FormEvent} from 'react'
 import {Activity,ArrowLeft,ArrowUpRight,Archive,Boxes,ChevronRight,FileText,GitBranch,LayoutDashboard,LockKeyhole,Network,LogOut,Play,Plus,RefreshCw,Search,Server,Shield,Users} from 'lucide-react'
 import {api,APIError,bytes,label,post,setCSRF,short,time,getDisplayTimeZone,setDisplayTimeZone} from './api'
-import type {Action,Audit,Details,Operation,OperationEvent,Preview,Role,Service,Session,Submit,User} from './api'
+import type {Action,Audit,ComposeDocument,ComposeDraft,Details,Operation,OperationEvent,Preview,Role,Service,Session,Submit,User} from './api'
 import {Badge,Button,Empty,Modal,Notice} from './ui'
 import {createOperationKey} from './operationKey'
 import MetricsView,{HostMetricsView} from './Metrics'
@@ -124,7 +124,7 @@ function Workspace({user,onLogout}:{user:User;onLogout:()=>Promise<void>}){
     <PageTitle title={services.find(service=>service.id===selected)?.name||selected} subtitle={current?.service.description||'Управление зарегистрированным Compose-проектом.'} action={<Button variant="outline" busy={refreshing} onClick={()=>void refresh()}><RefreshCw size={15}/>Обновить</Button>}/>
     {!current?<Empty icon={<Server/>}>Состояние сервиса недоступно. Обновите данные после подключения executor.</Empty>:<>
       <div className="service-toolbar"><div className="toolbar-primary">{(['prepare','build','deploy','rollback'] as Action[]).map(value=><Button key={value} variant={value==='deploy'?'default':'outline'} disabled={user.role==='viewer'||!current.capabilities?.[value]} title={!current.capabilities?.[value]?'Операция недоступна в текущем состоянии':value==='prepare'?'Создать кандидат из локальной рабочей папки':label(value)} onClick={()=>setAction(value)}>{value==='deploy'?<Play size={14}/>:value==='prepare'?<GitBranch size={14}/>:value==='rollback'?<RefreshCw size={14}/>:<Boxes size={14}/>} {label(value)}</Button>)}
-        {user.role==='admin'&&current.capabilities?.prepare_compose!==undefined&&<Button variant="outline" disabled={!current.capabilities.prepare_compose} title={current.capabilities.prepare_compose?'Проверить изменения Compose и собрать релиз':'Смена Compose недоступна в текущем состоянии'} onClick={()=>setAction('prepare_compose')}><FileText size={14}/>Сменить Compose</Button>}
+        {user.role==='admin'&&current.capabilities?.prepare_compose!==undefined&&<Button variant="outline" disabled={!current.capabilities.prepare_compose} title={current.capabilities.prepare_compose?'Редактировать Compose или взять файл из Git или рабочей папки':'Смена Compose недоступна в текущем состоянии'} onClick={()=>setAction('prepare_compose')}><FileText size={14}/>Сменить Compose</Button>}
         {user.role==='admin'&&<Button variant="outline" onClick={()=>setPage('proxy-waf')}><Network size={14}/>Настроить HTTP Proxy</Button>}
       </div><div className="toolbar-secondary">{(['snapshot','start','stop','restart'] as Action[]).map(value=><Button key={value} variant="ghost" disabled={user.role==='viewer'||!current.capabilities?.[value]} onClick={()=>setAction(value)}>{label(value)}</Button>)}</div></div>
       <div className="tabs" role="tablist" aria-label="Разделы сервиса">{[['overview','Состояние'],['releases','Релизы'],['files','Файлы / Diff'],['checks','Проверки'],['snapshots','Снимки'],['logs','Логи'],['operations','Операции'],['metrics','Метрики'],['source','Источник Git'],['settings','Конфигурация']].map(([id,name])=><button key={id} role="tab" aria-selected={tab===id} className={tab===id?'tab-active':''} onClick={()=>setTab(id)}>{name}{id==='releases'&&<span>{current.releases?.length||0}</span>}</button>)}</div>
@@ -149,7 +149,7 @@ function Workspace({user,onLogout}:{user:User;onLogout:()=>Promise<void>}){
   <footer className="footer"><span>CTF Service Manager <Badge>MVP</Badge></span><span>{displayZone==='UTC'?'Время UTC':'Локальное время браузера'} · точный UTC доступен во всплывающих датах</span></footer>
   </main></div>
   {registering&&<RegistrationDialog onClose={()=>setRegistering(false)} onRegistered={(service,sourceTab)=>{setRegistering(false);setServices(value=>value.some(item=>item.id===service.id)?value:[...value,service]);openService(service);if(sourceTab)setTab('source');void refresh()}}/>}
-  {action&&current&&<ActionDialog action={action} details={current} user={user} recoveryOperation={recoveryOperation} snapshotID={selectedSnapshot} onClose={()=>{setAction(null);setRecoveryOperation('');setSelectedSnapshot('')}} onAccepted={operation=>{if(operation.spec.kind==='prepare_compose')setTab('releases');setOperation(operation);setAction(null);setRecoveryOperation('');setSelectedSnapshot('');void refresh()}}/>}
+  {action&&current&&<ActionDialog key={`${scopedViewKey}:${action}`} action={action} details={current} user={user} recoveryOperation={recoveryOperation} snapshotID={selectedSnapshot} onClose={()=>{setAction(null);setRecoveryOperation('');setSelectedSnapshot('')}} onAccepted={operation=>{if(operation.spec.kind==='prepare_compose')setTab('releases');setOperation(operation);setAction(null);setRecoveryOperation('');setSelectedSnapshot('');void refresh()}}/>}
   {operation&&<OperationDialog operation={operations.find(value=>value.spec.id===operation.spec.id)||operation} sensitiveAccess={user.sensitive_access} canCancel={user.role!=='viewer'} onCancelled={()=>void refresh()} canRecover={user.role!=='viewer'&&!!details[operation.spec.service_id]?.capabilities?.recover} onRecover={()=>{setRecoveryOperation(operation.spec.id);setSelected(operation.spec.service_id);setPage('dashboard');setTab('operations');setOperation(null);setAction('recover')}} onClose={()=>setOperation(null)}/>}
   </div>
 }
@@ -179,42 +179,96 @@ function Releases({details}:{details:Details}){return <div className="panel"><di
 function Snapshots({details,canRestore,onRestore}:{details:Details;canRestore:boolean;onRestore:(id:string)=>void}){return <div className="panel"><div className="panel-heading"><div><h2><Archive size={17}/>Снимки файлов</h2><p>Целостная копия управляемых файлов. Работоспособность приложения и согласованность БД этим не подтверждаются.</p></div></div>{details.snapshots?.length?<div className="table-wrap"><table><thead><tr><th>Идентификатор</th><th>Назначение</th><th>Git commit</th><th>Дерево</th><th>Размер</th><th>Создан</th><th/></tr></thead><tbody>{details.snapshots.map(snapshot=><tr key={snapshot.id}><td><code>{snapshot.id}</code></td><td><Badge>{snapshot.purpose==='manual'?'Ручной':label(snapshot.purpose)}</Badge></td><td><code title={snapshot.git_source?.commit}>{short(snapshot.git_source?.commit)}</code>{snapshot.git_source&&<small>{snapshot.git_source.ref}</small>}</td><td><code>{short(snapshot.tree_digest)}</code></td><td>{bytes(snapshot.bytes)}</td><td title={snapshot.created_at}>{time(snapshot.created_at)}</td><td><Button variant="outline" disabled={!canRestore} onClick={()=>onRestore(snapshot.id)}>Создать кандидат</Button></td></tr>)}</tbody></table></div>:<Empty>Снимков пока нет.</Empty>}</div>}
 function Configuration({details}:{details:Details}){return <div className="panel"><div className="panel-heading"><div><h2><FileText size={17}/>Зарегистрированная конфигурация</h2><p>Настройки компонентов, управляемых файлов и игровых хранилищ, подтверждённые при регистрации.</p></div></div><div className="facts-grid"><Fact label="Compose project" value={details.service.compose_project}/><Fact label="Рабочий каталог" value={details.service.project_directory}/><Fact label="Исходный workspace" value={details.service.source_directory}/><Fact label="Управляемые файлы" value={details.service.managed_paths.map(value=>value.path).join(', ')}/></div><h3 className="inner-heading">Хранилища данных</h3>{details.service.data_paths?.length?<div className="table-wrap"><table><thead><tr><th>Хранилище</th><th>Тип</th><th>Компонент</th><th>Назначение</th><th>Значимые данные</th></tr></thead><tbody>{details.service.data_paths.map(value=><tr key={value.name}><td>{value.name}</td><td>{value.kind}</td><td>{value.component}</td><td><code>{value.target}</code></td><td>{value.significant?'Да':'Нет'}</td></tr>)}</tbody></table></div>:<Empty>Хранилища не зарегистрированы.</Empty>}</div>}
 
+type ComposeSource = 'editor'|'git'|'workspace'
+const maxComposeDraftBytes = 128 * 1024
+
 function ActionDialog({action,details,user,recoveryOperation,snapshotID,onClose,onAccepted}:{action:Action;details:Details;user:User;recoveryOperation?:string;snapshotID?:string;onClose:()=>void;onAccepted:(operation:Operation)=>void}){
   const codeBinds=details.service.data_paths?.filter(data=>data.allow_code_updates)||[]
   const options=(details.releases||[]).filter(value=>action!=='rollback'||value.id!==details.current_release_id).sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at))
   const [release,setRelease]=useState(options[0]?.id||''),[plan,setPlan]=useState<{request:string;preview:Preview}|null>(null),[busy,setBusy]=useState(false),[loading,setLoading]=useState(false),[error,setError]=useState(''),[confirmData,setConfirmData]=useState(false),[acceptDrift,setAcceptDrift]=useState(false)
   const [confirmCompose,setConfirmCompose]=useState(false)
-  const [composeFromGit,setComposeFromGit]=useState(!!details.capabilities?.fetch_source)
+  const [composeSource,setComposeSource]=useState<ComposeSource>('editor')
+  const [composeDocument,setComposeDocument]=useState<ComposeDocument|null>(null)
+  const [draft,setDraft]=useState(''),[checkedDraft,setCheckedDraft]=useState<ComposeDraft|null>(null)
+  const [loadAttempt,setLoadAttempt]=useState(0),[documentError,setDocumentError]=useState(''),[staleDraft,setStaleDraft]=useState(false)
   const preparingCompose=action==='prepare_compose'
-  const getsGit=action==='fetch_source'||(preparingCompose&&composeFromGit)
+  const editingCompose=preparingCompose&&composeSource==='editor'
+  const composeFromGit=preparingCompose&&composeSource==='git'
+  const getsGit=action==='fetch_source'||composeFromGit
   const selectsRelease=action==='deploy'||action==='rollback'
+  const serviceID=details.service.id
   const [key]=useState(createOperationKey)
-  const request:Submit={service_id:details.service.id,action,idempotency_key:key,...(action==='build'?{candidate_id:details.candidate_id}:{}),...(action==='restore_snapshot'?{snapshot_id:snapshotID}:{}),...(acceptDrift?{accept_file_drift:true}:{}),...(selectsRelease?{release_id:release}:{}),...(action==='recover'?{recovery_operation_id:recoveryOperation}:{}),...(preparingCompose&&composeFromGit?{compose_from_git:true}:{})}
-  const requestString=JSON.stringify(request)
-  const preview=plan?.request===requestString?plan.preview:null
+  const request:Submit={service_id:serviceID,action,idempotency_key:key,...(action==='build'?{candidate_id:details.candidate_id}:{}),...(action==='restore_snapshot'?{snapshot_id:snapshotID}:{}),...(acceptDrift?{accept_file_drift:true}:{}),...(selectsRelease?{release_id:release}:{}),...(action==='recover'?{recovery_operation_id:recoveryOperation}:{}),...(composeFromGit?{compose_from_git:true}:{}),...(editingCompose&&checkedDraft?{compose_draft:checkedDraft}:{})}
+  const previewRequest=editingCompose&&!checkedDraft?null:JSON.stringify(request)
+  const preview=plan?.request===previewRequest?plan.preview:null
   const candidateCommit=action==='build'&&preview?.candidate_id
     ?details.snapshots?.find(snapshot=>snapshot.id===preview.candidate_id)?.git_source?.commit
     :undefined
-  useEffect(()=>{let active=true;setPlan(null);setError('');setConfirmData(false);setConfirmCompose(false);setLoading(true);post<Preview>('/api/preview',JSON.parse(requestString)).then(result=>{if(active)setPlan({request:requestString,preview:result})}).catch(error=>{if(active)setError(errorMessage(error))}).finally(()=>{if(active)setLoading(false)});return()=>{active=false}},[requestString])
+  const draftTooLarge=editingCompose&&(draft.length>maxComposeDraftBytes||new TextEncoder().encode(draft).length>maxComposeDraftBytes)
+  const canCheckDraft=!!composeDocument&&draft!==composeDocument.content&&!!draft.trim()&&!draftTooLarge&&!staleDraft
+  const resetComposeDocument=()=>{
+    setComposeDocument(null);setDocumentError('');setStaleDraft(false)
+    setDraft('');setCheckedDraft(null);setPlan(null)
+  }
+  useEffect(()=>{
+    if(!editingCompose)return
+    const controller=new AbortController()
+    api<ComposeDocument>(`/api/services/${encodeURIComponent(serviceID)}/compose`,{signal:controller.signal}).then(document=>{
+      if(!controller.signal.aborted){setComposeDocument(document);setDraft(document.content)}
+    }).catch(error=>{if(!controller.signal.aborted)setDocumentError(errorMessage(error))})
+    return()=>controller.abort()
+  },[editingCompose,loadAttempt,serviceID])
+  useEffect(()=>{
+    let active=true
+    setPlan(null);setError('');setConfirmData(false);setConfirmCompose(false)
+    setLoading(previewRequest!==null)
+    if(!previewRequest)return
+    post<Preview>('/api/preview',JSON.parse(previewRequest)).then(result=>{
+      if(active)setPlan({request:previewRequest,preview:result})
+    }).catch(error=>{
+      if(!active)return
+      setError(errorMessage(error))
+      if(error instanceof APIError&&error.code==='compose_editor_stale')setStaleDraft(true)
+    }).finally(()=>{if(active)setLoading(false)})
+    return()=>{active=false}
+  },[previewRequest,checkedDraft])
   const switchesCompose=selectsRelease&&!!preview?.compose_change
   const composeBlocked=switchesCompose&&(user.role!=='admin'||!confirmCompose)
-  const submit=async()=>{if(!preview||composeBlocked)return;setBusy(true);setError('');try{onAccepted(await post<Operation>('/api/operations',{...request,plan_digest:preview.plan_digest,confirm_data_compatibility:confirmData,...(switchesCompose?{confirm_compose_change:true}:{})}))}catch(error){setError(errorMessage(error));if(error instanceof APIError&&error.status===409)setPlan(null)}finally{setBusy(false)}}
+  const submit=async()=>{if(!preview||composeBlocked)return;setBusy(true);setError('');try{onAccepted(await post<Operation>('/api/operations',{...request,plan_digest:preview.plan_digest,confirm_data_compatibility:confirmData,...(switchesCompose?{confirm_compose_change:true}:{})}))}catch(error){setError(errorMessage(error));if(error instanceof APIError&&error.status===409){setPlan(null);if(error.code==='compose_editor_stale')setStaleDraft(true)}}finally{setBusy(false)}}
   const title=preparingCompose?'Сменить Compose':label(action)
   return <Modal open onClose={()=>{if(!busy)onClose()}} title={`${title} · ${details.service.name}`} description={preparingCompose?'Подготовьте релиз с новым Compose, пока сервис работает.':'План сформирован executor по зарегистрированной политике.'} wide><div className="dialog-body">
     {preparingCompose&&<>
-      <label>Источник Compose<select disabled={busy} value={composeFromGit?'git':'workspace'} onChange={event=>setComposeFromGit(event.target.value==='git')}>
-        <option value="git" disabled={!details.capabilities?.fetch_source}>Из Git</option><option value="workspace">Из рабочей папки</option>
+      <label>Источник Compose<select disabled={busy} value={composeSource} onChange={event=>{resetComposeDocument();setComposeSource(event.target.value as ComposeSource)}}>
+        <option value="editor">В редакторе</option><option value="git" disabled={!details.capabilities?.fetch_source}>Из Git</option><option value="workspace">Из рабочей папки</option>
       </select></label>
-      <p className="section-note">Панель проверит изменения и соберёт новый релиз. Можно менять лимиты CPU, памяти и числа процессов, а также адрес и порт хоста у существующих публикаций TCP или UDP. Готовый релиз можно применить отдельно.</p>
+      <p className="section-note">Можно менять лимиты CPU, памяти и числа процессов, а также адрес и порт хоста у существующих публикаций TCP или UDP. После проверки соберите релиз и нажмите «Применить» в карточке сервиса. Предыдущий Compose доступен через «Откатить», постоянные данные сохраняются в зарегистрированных хранилищах.</p>
+      {editingCompose&&<section className="compose-editor" aria-label="Редактор Compose">
+        {documentError&&<Notice variant="error">{documentError}</Notice>}
+        {!composeDocument&&!documentError&&<p className="loading-line" role="status"><RefreshCw size={16} className="spin"/>Загрузка действующего Compose…</p>}
+        {composeDocument&&<>
+          <label>Compose YAML <code>{composeDocument.path}</code>
+            <textarea className="compose-editor-input" aria-describedby="compose-editor-help" disabled={busy} value={draft} rows={15} wrap="off" spellCheck={false} autoComplete="off" autoCorrect="off" autoCapitalize="off" onChange={event=>{setDraft(event.target.value);setCheckedDraft(null);setPlan(null);setError('')}}/>
+          </label>
+          <small id="compose-editor-help">Черновик вступит в силу после применения собранного релиза. Размер файла до 128 КиБ.</small>
+          {draftTooLarge&&<Notice variant="error">Черновик превышает 128 КиБ. Сократите файл, чтобы запустить проверку.</Notice>}
+          {staleDraft&&<Notice variant="warning">Действующий Compose изменился. Скопируйте свои правки перед повторной загрузкой файла.</Notice>}
+          <div className="compose-editor-actions">
+            <Button variant="outline" disabled={!canCheckDraft||busy||loading} onClick={()=>setCheckedDraft({content:draft,revision:composeDocument.revision})}>Проверить Compose</Button>
+            {preview&&<span role="status">Проверка пройдена</span>}
+          </div>
+        </>}
+        {(documentError||staleDraft)&&<Button variant="outline" disabled={busy} onClick={()=>{resetComposeDocument();setLoadAttempt(attempt=>attempt+1)}}>Загрузить Compose заново</Button>}
+      </section>}
     </>}
     {selectsRelease&&<label>Целевой релиз<select disabled={busy} value={release} onChange={event=>{setAcceptDrift(false);setRelease(event.target.value)}}>{options.map(value=><option key={value.id} value={value.id}>{value.id} · {time(value.created_at)}</option>)}</select></label>}
-    {loading&&<div className="loading-line"><RefreshCw size={16} className="spin"/>Проверка файлов, образов и политики…</div>}{error&&<Notice variant="error">{error}</Notice>}
+    {loading&&<div className="loading-line" role="status"><RefreshCw size={16} className="spin"/>Проверка файлов, образов и политики…</div>}{error&&<Notice variant="error">{error}</Notice>}
     {preview&&<>
       {action==='prepare'&&<Notice>«Подготовить» создаёт кандидат из локальной рабочей папки и выбирает его для следующей сборки. Для обновления из репозитория откройте «Источник Git» и нажмите «Получить из Git».</Notice>}
       {action==='restore_snapshot'&&<Notice>Снимок {snapshotID} станет новым неизменяемым кандидатом. Активный сервис и workspace не изменятся. Затем соберите и примените релиз.</Notice>}{action==='fetch_source'&&<Notice>Панель создаст кандидат из выбранной версии Git и сохранит утверждённые Compose-файлы сервера. Перед сборкой проверьте точный Git commit и изменения остальных управляемых файлов, включая Dockerfile.</Notice>}<div className="preview-facts"><Fact label="Компоненты" value={preview.targets.join(', ')}/><Fact label="Политика" value={`Ревизия ${preview.policy_revision}`}/><Fact label="Действующий релиз" value={preview.active_release_id||'Не зафиксирован'}/>{candidateCommit&&<Fact label="Git commit кандидата" value={candidateCommit}/>}<Fact label="Точка возврата" value={preview.has_rollback?'Исходная версия записана':'Не подтверждена'}/></div>
       {['stop','restart','deploy','rollback'].includes(action)&&<Notice variant="warning">Операция может прервать доступность компонентов: {preview.targets.join(', ')}.</Notice>}
       {getsGit&&preview.git_source&&<div className="preview-facts"><Fact label="Репозиторий" value={preview.git_source.url||'—'}/><Fact label="Ветка / тег / commit" value={preview.git_source.ref||'HEAD'}/></div>}
       {switchesCompose&&<ComposeChangeReview preview={preview} admin={user.role==='admin'} confirmed={confirmCompose} onConfirm={setConfirmCompose}/>}
+      {editingCompose&&!!preview.compose_changes?.length&&<section><h3>Изменения настроек Compose</h3><ComposeChanges changes={preview.compose_changes}/></section>}
       <div className="diff-heading"><h3>Изменения файлов</h3><Badge>{preview.changed_files?.length||0}</Badge></div>{getsGit?<p className="muted">Файлы будут проверены при получении исходников. Точный commit сохраняется вместе с кандидатом.</p>:!user.sensitive_access?<Notice>Детали diff скрыты. Доступ выдаёт администратор команды.</Notice>:preview.changed_files?.length?<div className="diff-list">{preview.changed_files.slice(0,150).map(value=><div key={value.path}><Badge tone={value.change==='deleted'?'bad':'neutral'}>{value.change}</Badge><code>{value.path}</code></div>)}{preview.changed_files.length>150&&<small>Показаны первые 150 файлов.</small>}</div>:<p className="muted">Изменений управляемых файлов в этом плане нет.</p>}
       {preview.images?.length? <div className="plan-images"><h3>Локальные образы</h3>{preview.images.map(value=><div key={value.component}><span>{value.component}</span><code>{short(value.image_id)}</code></div>)}</div>:null}
       {preview.active_file_drift&&<Notice variant="warning">Активные файлы изменены вне панели. Точка возврата будет содержать эти файлы без подтверждения работоспособности.{user.sensitive_access&&<ul>{preview.drift_changed_files?.map(file=><li key={file.path}><code>{file.path}</code> · {file.change}</li>)}</ul>}{user.sensitive_access?<label className="checkbox-label"><input type="checkbox" checked={acceptDrift} onChange={event=>setAcceptDrift(event.target.checked)}/><span>Принимаю показанные изменения как непроверенную точку возврата. Сформировать новый план с этим решением.</span></label>:<p>Для просмотра и принятия drift нужен доступ к файлам и diff.</p>}</Notice>}
@@ -229,15 +283,19 @@ function ActionDialog({action,details,user,recoveryOperation,snapshotID,onClose,
     </div><div className="dialog-footer"><Button variant="outline" disabled={busy} onClick={onClose}>Отмена</Button><Button variant={action==='stop'?'danger':'default'} busy={busy} disabled={!preview||loading||composeBlocked||(preview.data_compatibility_required&&!confirmData)||!!(preview.active_file_drift&&!preview.accepted_file_drift)} onClick={()=>void submit()}>{preparingCompose?'Подготовить и собрать':label(action)}</Button></div></Modal>
 }
 
-function ComposeChangeReview({preview,admin,confirmed,onConfirm}:{preview:Preview;admin:boolean;confirmed:boolean;onConfirm:(value:boolean)=>void}){
+function ComposeChanges({changes}:{changes:NonNullable<Preview['compose_changes']>}){
   const labels:Record<string,string>={cpus:'CPU',mem_limit:'Память',pids_limit:'Процессы',ports:'Публикация портов'}
+  return <div className="table-wrap"><table><thead><tr><th>Компонент</th><th>Настройка</th><th>Сейчас</th><th>После переключения</th></tr></thead><tbody>
+    {changes.map(change=><tr key={`${change.component}:${change.setting}`}><td>{change.component}</td><td>{labels[change.setting]||change.setting}</td><td><code>{change.before||'—'}</code></td><td><code>{change.after||'—'}</code></td></tr>)}
+  </tbody></table></div>
+}
+
+function ComposeChangeReview({preview,admin,confirmed,onConfirm}:{preview:Preview;admin:boolean;confirmed:boolean;onConfirm:(value:boolean)=>void}){
   const changes=preview.compose_changes||[]
   const changesPorts=changes.some(change=>change.setting==='ports')
   return <section>
     <h3>Смена Compose</h3>
-    {changes.length>0&&<div className="table-wrap"><table><thead><tr><th>Компонент</th><th>Настройка</th><th>Сейчас</th><th>После переключения</th></tr></thead><tbody>
-      {changes.map(change=><tr key={`${change.component}:${change.setting}`}><td>{change.component}</td><td>{labels[change.setting]||change.setting}</td><td><code>{change.before||'—'}</code></td><td><code>{change.after||'—'}</code></td></tr>)}
-    </tbody></table></div>}
+    {changes.length>0&&<ComposeChanges changes={changes}/>}
     <p className="section-note">Панель остановит затронутые контейнеры и запустит их с выбранной конфигурацией. Постоянные данные сохраняются в существующих хранилищах.</p>
     {changesPorts&&<Notice variant="warning">Изменится адрес или порт доступа к сервису. Звёздочка обозначает адрес публикации по умолчанию Docker.</Notice>}
     {admin?<label className="checkbox-label"><input type="checkbox" checked={confirmed} onChange={event=>onConfirm(event.target.checked)}/><span>{changesPorts?'Подтверждаю смену Compose, изменение доступа по сети и временный перерыв в работе сервиса.':'Подтверждаю смену Compose и временный перерыв в работе сервиса.'}</span></label>:<Notice variant="warning">Смену Compose подтверждает администратор.</Notice>}

@@ -99,6 +99,21 @@ func NewManifest(entries []ManifestEntry) (Manifest, error) {
 
 func (m Manifest) Entries() []ManifestEntry { return append([]ManifestEntry{}, m.entries...) }
 
+// WithFileContents replaces the recorded bytes of an existing regular file
+// while retaining its registered owner, permissions and all other entries.
+func (m Manifest) WithFileContents(name string, content []byte) (Manifest, error) {
+	entries := m.Entries()
+	for i := range entries {
+		entry := &entries[i]
+		if entry.Path == name && entry.Type == EntryFile {
+			entry.Size = int64(len(content))
+			entry.Digest = Hash(content)
+			return NewManifest(entries)
+		}
+	}
+	return Manifest{}, fmt.Errorf("replacement must name an existing regular manifest file")
+}
+
 func (m Manifest) CanonicalJSON() []byte {
 	entries := m.Entries()
 	data, _ := json.Marshal(manifestDocument{SchemaVersion: SchemaVersion, Entries: entries})

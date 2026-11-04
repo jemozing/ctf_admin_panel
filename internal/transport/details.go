@@ -71,6 +71,7 @@ func (e *ComposePortConflict) Unwrap() error { return store.ErrConflict }
 type PreviewResult struct {
 	ComposeFromGit            bool                     `json:"compose_from_git,omitempty"`
 	ComposeSourceTree         domain.Digest            `json:"compose_source_tree,omitempty"`
+	ComposeDraftConfiguration domain.Digest            `json:"compose_draft_configuration,omitempty"`
 	ComposeChange             bool                     `json:"compose_change,omitempty"`
 	ComposeChanges            []ComposeResourceChange  `json:"compose_changes,omitempty"`
 	Space                     PreviewSpace             `json:"space"`

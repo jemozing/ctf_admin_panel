@@ -2,9 +2,9 @@ package executor
 
 import (
 	"context"
-	"errors"
 
 	"github.com/ctf-service-manager/ctf-service-manager/internal/domain"
+	"github.com/ctf-service-manager/ctf-service-manager/internal/transport"
 )
 
 func (m *Manager) activeConfigurationDigest(ctx context.Context, s domain.Service, st runtimeState) (domain.Digest, error) {
@@ -32,7 +32,7 @@ func (m *Manager) requireNoRuntimePortOverlay(ctx context.Context, s domain.Serv
 		return err
 	}
 	if overlay.Active {
-		return errors.New("return the service ports from HTTP Proxy before switching Compose configuration")
+		return &transport.ComposeEditorError{Message: "return the service ports from HTTP Proxy before switching Compose configuration"}
 	}
 	return nil
 }

@@ -9,7 +9,8 @@ import (
 )
 
 func (s *Server) serviceRoutes(w http.ResponseWriter, r *http.Request, current session) {
-	if strings.Contains(r.URL.Path, "/checks") {
+	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/services/"), "/")
+	if len(parts) >= 2 && parts[1] == "checks" {
 		s.healthCheckRoutes(w, r, current)
 		return
 	}
@@ -24,7 +25,6 @@ func (s *Server) serviceRoutes(w http.ResponseWriter, r *http.Request, current s
 	if !method(w, r, "GET") {
 		return
 	}
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/services/"), "/")
 	id, err := domain.ParseID(parts[0])
 	if err != nil {
 		apiError(w, 400, "invalid_id", "Invalid service ID")
@@ -41,6 +41,20 @@ func (s *Server) serviceRoutes(w http.ResponseWriter, r *http.Request, current s
 			return
 		}
 		writeJSON(w, 200, v)
+		return
+	}
+	if len(parts) == 2 && parts[1] == "compose" {
+		if current.User.Role != RoleAdmin {
+			s.deny(w, r, current.User.ID)
+			return
+		}
+		if r.URL.RawQuery != "" {
+			apiError(w, 400, "invalid_query", "No query is supported")
+			return
+		}
+		s.completeAdminRead(w, r, current, "compose.read", string(id), func() (any, error) {
+			return s.executor.ComposeDocument(r.Context(), id)
+		})
 		return
 	}
 	if len(parts) == 2 && parts[1] == "metrics" {
@@ -162,7 +176,7 @@ func (s *Server) preview(w http.ResponseWriter, r *http.Request, current session
 		return
 	}
 	var input transport.SubmitRequest
-	if !decodeBody(w, r, &input) {
+	if !decodeOperationBody(w, r, current, &input) {
 		return
 	}
 	if current.User.Role != RoleAdmin && (input.Action == domain.OperationPrepareCompose || input.ConfirmComposeChange) {

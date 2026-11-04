@@ -23,7 +23,7 @@ func (s *Server) gitRepositoryRoute(w http.ResponseWriter, r *http.Request, curr
 	if r.URL.Path == "/api/git/directories" {
 		var input transport.GitDirectoriesRequest
 		if decodeGitRequest(w, r, &input) {
-			s.completeGitRequest(w, r, current, "source.browse", string(input.ServiceID), func() (any, error) {
+			s.completeAdminRead(w, r, current, "source.browse", string(input.ServiceID), func() (any, error) {
 				return s.executor.BrowseGitDirectories(r.Context(), input)
 			})
 		}
@@ -31,7 +31,7 @@ func (s *Server) gitRepositoryRoute(w http.ResponseWriter, r *http.Request, curr
 	}
 	var input transport.GitProbeRequest
 	if decodeGitRequest(w, r, &input) {
-		s.completeGitRequest(w, r, current, "source.probe", string(input.ServiceID), func() (any, error) {
+		s.completeAdminRead(w, r, current, "source.probe", string(input.ServiceID), func() (any, error) {
 			return s.executor.ProbeGitSource(r.Context(), input)
 		})
 	}
@@ -59,13 +59,13 @@ func decodeGitRequest(w http.ResponseWriter, r *http.Request, input interface{ V
 	return true
 }
 
-func (s *Server) completeGitRequest(w http.ResponseWriter, r *http.Request, current session, action, target string, execute func() (any, error)) {
+func (s *Server) completeAdminRead(w http.ResponseWriter, r *http.Request, current session, action, target string, execute func() (any, error)) {
 	if err := s.audit(r.Context(), current.User.ID, action, target, "requested", ""); err != nil {
 		internalError(w)
 		return
 	}
 	result, requestErr := execute()
-	// Private repository metadata must not outlive the initiating Admin session.
+	// Private results must not outlive the initiating Admin session.
 	cookie, err := r.Cookie(s.cookieName())
 	if err != nil {
 		apiError(w, 401, "unauthenticated", "Sign in to continue")

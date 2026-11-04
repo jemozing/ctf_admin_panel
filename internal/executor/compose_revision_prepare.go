@@ -40,6 +40,9 @@ func (m *Manager) previewPrepareCompose(ctx context.Context, s domain.Service, s
 	if err := m.requireNoRuntimePortOverlay(ctx, s); err != nil {
 		return domain.Manifest{}, err
 	}
+	if req.ComposeDraft != nil {
+		return m.previewComposeDraft(ctx, s, st, *req.ComposeDraft, result)
+	}
 	result.ComposeFromGit = req.ComposeFromGit
 	if req.ComposeFromGit {
 		source, err := m.GitSource(ctx, s.ID)
@@ -130,6 +133,9 @@ func (m *Manager) prepareComposeRelease(ctx context.Context, s domain.Service, s
 	if err := m.stage(ctx, op.Spec.ID, domain.StageCopying); err != nil {
 		return err
 	}
+	if input.Request.ComposeDraft != nil {
+		return m.prepareComposeDraftRelease(ctx, s, st, op, input, current, configDigest)
+	}
 	source := s.SourceDirectory
 	var provenance *domain.GitProvenance
 	if input.Request.ComposeFromGit {
@@ -200,6 +206,10 @@ func (m *Manager) prepareComposeRelease(ctx context.Context, s domain.Service, s
 	if candidate.ManifestDigest != observed.Digest() {
 		return errors.New("Compose candidate files changed after validation")
 	}
+	return m.buildPreparedCompose(ctx, s, st, op, input, candidate, next, nextDigest)
+}
+
+func (m *Manager) buildPreparedCompose(ctx context.Context, s domain.Service, st runtimeState, op domain.Operation, input operationInput, candidate domain.Snapshot, next Configuration, nextDigest domain.Digest) error {
 	// A Build can release the artifact gate. Keep this snapshot alive until
 	// its release exists or the preparation operation reaches a terminal state.
 	if err := m.Store.PutImmutable(ctx, "compose_preparation", op.Spec.ID, s.ID, candidate.ID); err != nil {
@@ -247,45 +257,54 @@ func hasGitFilesForComposeRevision(active, git domain.Manifest, compose map[stri
 }
 
 func (m *Manager) prepareComposeConfiguration(ctx context.Context, s domain.Service, current Configuration, currentDigest domain.Digest, overrides map[string][]byte) (Configuration, domain.Digest, error) {
+	next, changes, err := m.reviewComposeConfiguration(ctx, s, current, overrides)
+	if err != nil || len(changes) == 0 {
+		return current, currentDigest, err
+	}
+	digest, err := m.storeComposeConfiguration(ctx, s, next)
+	return next, digest, err
+}
+
+func (m *Manager) reviewComposeConfiguration(ctx context.Context, s domain.Service, current Configuration, overrides map[string][]byte) (Configuration, []docker.ComposeResourceChange, error) {
 	if len(current.FileInputs) != 0 {
-		return Configuration{}, "", errors.New("Compose changes with file-backed runtime inputs require a separate policy review")
+		return Configuration{}, nil, &transport.ComposeEditorError{Message: "Compose changes with file-backed runtime inputs require a separate policy review"}
 	}
 	report, err := docker.NormalizeWithComposeFiles(ctx, m.Config, docker.ComposeInput{
 		ProjectDirectory: s.ProjectDirectory, ProjectName: s.ComposeProject, Files: s.ComposeFiles, Profiles: s.Profiles,
 	}, overrides)
 	if err != nil {
-		return Configuration{}, "", err
+		return Configuration{}, nil, err
 	}
 	if len(report.Issues) > 0 {
-		return Configuration{}, "", fmt.Errorf("new Compose is outside the supported profile (%s)", report.Issues[0].Code)
+		return Configuration{}, nil, &transport.ComposeEditorError{Message: fmt.Sprintf("new Compose is outside the supported profile (%s)", report.Issues[0].Code)}
 	}
 	var proposed map[string]any
 	if err := json.Unmarshal(report.Normalized, &proposed); err != nil {
-		return Configuration{}, "", err
+		return Configuration{}, nil, err
 	}
 	old, err := m.renderConfiguration(current)
 	if err != nil {
-		return Configuration{}, "", err
+		return Configuration{}, nil, err
 	}
 	changes, err := docker.ComposeResourceChanges(old, proposed, s.Targets)
 	if err != nil {
-		return Configuration{}, "", err
+		return Configuration{}, nil, &transport.ComposeEditorError{Message: err.Error()}
 	}
 	if len(changes) == 0 {
-		return current, currentDigest, nil
+		return current, changes, nil
 	}
 	if err := m.validateNewComposePorts(s, old, proposed); err != nil {
-		return Configuration{}, "", err
+		return Configuration{}, nil, err
 	}
 	// Copy only the reviewed settings from the normalized candidate.
 	// Vault references and all other model settings stay frozen.
 	encoded, err := json.Marshal(current)
 	if err != nil {
-		return Configuration{}, "", err
+		return Configuration{}, nil, err
 	}
 	var next Configuration
 	if err := json.Unmarshal(encoded, &next); err != nil {
-		return Configuration{}, "", err
+		return Configuration{}, nil, err
 	}
 	services := next.Model["services"].(map[string]any)
 	sourceServices := proposed["services"].(map[string]any)
@@ -298,13 +317,14 @@ func (m *Manager) prepareComposeConfiguration(ctx context.Context, s domain.Serv
 			delete(target, change.Setting)
 		}
 	}
-	encoded, err = json.Marshal(next)
+	return next, changes, nil
+}
+
+func (m *Manager) storeComposeConfiguration(ctx context.Context, s domain.Service, next Configuration) (domain.Digest, error) {
+	encoded, err := json.Marshal(next)
 	if err != nil {
-		return Configuration{}, "", err
+		return "", err
 	}
 	digest := domain.Hash(encoded)
-	if err := m.Store.PutImmutable(ctx, "configuration", domain.ID(string(digest)[7:]), s.ID, next); err != nil {
-		return Configuration{}, "", err
-	}
-	return next, digest, nil
+	return digest, m.Store.PutImmutable(ctx, "configuration", domain.ID(string(digest)[7:]), s.ID, next)
 }
