@@ -353,8 +353,12 @@ func (e *Engine) AddBan(q BanRequest) (Ban, error) {
 	if err != nil || q.TTLSeconds < 1 || q.TTLSeconds > 3600 || q.Comment == "" || len(q.Comment) > 500 {
 		return Ban{}, errors.New("valid IP, bounded TTL and comment required")
 	}
-	if !e.knownScope(q.ServiceID, q.RouteID) {
+	mode, known := e.scopeMode(q.ServiceID, q.RouteID)
+	if !known {
 		return Ban{}, errors.New("unknown service or ban scope")
+	}
+	if mode == wafRateLimitMode {
+		return Ban{}, errors.New("manual bans are unavailable for a service using the simple rate limit")
 	}
 	now := e.options.Now()
 	b := Ban{ServiceID: q.ServiceID, RouteID: q.RouteID, IP: ip.String(), Reason: q.Comment, Source: "manual", CreatedAt: now, ExpiresAt: now.Add(time.Duration(q.TTLSeconds) * time.Second)}
@@ -372,7 +376,8 @@ func (e *Engine) AddBan(q BanRequest) (Ban, error) {
 }
 func (e *Engine) RemoveBan(q UnbanRequest) error {
 	ip, err := normalizedIP(q.IP)
-	if err != nil || q.Comment == "" || len(q.Comment) > 500 || !e.knownScope(q.ServiceID, q.RouteID) {
+	_, known := e.scopeMode(q.ServiceID, q.RouteID)
+	if err != nil || q.Comment == "" || len(q.Comment) > 500 || !known {
 		return errors.New("known scope, IP and comment required")
 	}
 	q.IP = ip.String()
@@ -384,13 +389,13 @@ func (e *Engine) RemoveBan(q UnbanRequest) error {
 	}
 	return e.audit("unban_applied", q.ServiceID, q.IP, q.Comment)
 }
-func (e *Engine) knownScope(service, route string) bool {
+func (e *Engine) scopeMode(service, route string) (string, bool) {
 	for _, r := range e.active.Load().policy.Routes {
 		if r.ServiceID == service && scopeRoute(r) == route {
-			return true
+			return r.WAF.Mode, true
 		}
 	}
-	return false
+	return "", false
 }
 func (e *Engine) Close(ctx context.Context) error {
 	e.cancel()

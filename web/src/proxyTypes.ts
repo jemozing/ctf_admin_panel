@@ -1,4 +1,4 @@
-export type WafMode = 'off'|'observe_only'|'enforce'
+export type WafMode = 'off'|'observe_only'|'rate_limit'|'enforce'
 export type WafException = {cidr:string;bypass_rate:boolean;bypass_ban:boolean;comment?:string}
 export type WafPolicy = {mode:WafMode;rate_per_second:number;burst:number;violation_threshold:number;violation_window_seconds:number;ban_ttl_seconds:number;max_ip_states:number;state_ttl_seconds:number;overflow_mode:'reject_new';route_specific?:boolean;exceptions:WafException[]}
 export type CapturePolicy = {mode:'metadata'|'bounded_body'|'grpc_body';max_body_bytes:number;redact_headers:string[];redact_query_fields:string[];redact_body_fields:string[];body_patterns:string[]}
@@ -30,6 +30,24 @@ export function proxyLoopbackListener(value:string):boolean{
 export function proxyRouteID(prefix='route-'){return prefix+Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join('')}
 export type PolicyView = {policy:ProxyPolicy;desired_revision:number;applied_revision:number;configured:boolean;external_revision?:boolean;error?:string;warnings?:string[]}
 export type ProxyRouteInput = Omit<ProxyRoute,'upstream'> & {upstream_port:number}
+export const wafBlocks=(mode:WafMode)=>mode==='rate_limit'||mode==='enforce'
+
+export function proxyServiceRatePolicy(routes:ProxyRouteInput[],serviceID:string):WafPolicy|undefined{
+  return routes.find(route=>route.service_id===serviceID&&route.waf.mode==='rate_limit')?.waf
+}
+
+export function proxyRouteDraft(routes:ProxyRouteInput[],updated:ProxyRouteInput):ProxyRouteInput[]{
+  const previous=routes.find(route=>route.id===updated.id)
+  if(!previous)return [...routes,updated]
+  const policyChanged=JSON.stringify(canonical(previous.waf))!==JSON.stringify(canonical(updated.waf))
+  const allRoutes=previous.waf.mode==='rate_limit'||updated.waf.mode==='rate_limit'
+  return routes.map(route=>{
+    if(route.id===updated.id)return updated
+    if(!policyChanged||route.service_id!==updated.service_id)return route
+    if(allRoutes||(!updated.waf.route_specific&&!route.waf.route_specific))return {...route,waf:updated.waf}
+    return route
+  })
+}
 export type ProxyPreview = {proposal_id:string;digest:string;policy:ProxyPolicy;previous_policy?:ProxyPolicy;observed_applied_revision?:number;warnings:string[];changes?:string[];expires_at?:string}
 export type ProxyApply = {desired_revision:number;applied_revision:number;activation:'pending'|'applied';operation_id?:string}
 export type ProxyBan = {service_id:string;route_id?:string;ip:string;reason:string;source:string;created_at:string;expires_at:string}
@@ -152,9 +170,9 @@ export function proxyRouteChanges(before:ProxyRoute[],after:ProxyRoute[]):ProxyR
   return changes
 }
 
-export const wafLabels:Record<string,string>={off:'Отключён',observe_only:'Наблюдение',enforce:'Блокировка',allow:'Пропущен',allowed:'Пропущен',observe:'Превышение · наблюдение',would_block:'Был бы заблокирован',rate_limited:'Лимит запросов',banned:'Временный бан',deny:'Отклонён',blocked:'Отклонён',exempt:'Исключение checker',exception:'Исключение checker',not_evaluated:'WAF не применён',state_full:'Лимит IP-состояний',degraded:'Защита ограничена'}
+export const wafLabels:Record<string,string>={off:'Отключён',observe_only:'Наблюдение',rate_limit:'Лимит запросов по IP',enforce:'Блокировка',allow:'Пропущен',allowed:'Пропущен',observe:'Превышение · наблюдение',would_block:'Был бы заблокирован',rate_limited:'Лимит запросов',banned:'Временный бан',deny:'Отклонён',blocked:'Отклонён',exempt:'Исключение checker',exception:'Исключение checker',not_evaluated:'WAF не применён',state_full:'Лимит IP-состояний',degraded:'Защита ограничена'}
 export const wafLabel=(value:string)=>wafLabels[value]||value
-export const wafReasonLabel=(value:string)=>({request_rate:'Превышен лимит запросов',request_rate_repeated:'Повторные превышения лимита запросов',active_ban:'Действует временный бан',autoban:'Временный автобан за повторные превышения',waf_state_unavailable:'Состояние WAF недоступно',ip_state_capacity:'Исчерпан бюджет IP-состояний',ban_state_capacity:'Исчерпан бюджет временных банов',checker_rate_exception:'Исключение checker из rate limit',unsupported_protocol:'Протокол не поддерживается этим HTTP-профилем',unsupported_request_profile:'Запрос не соответствует профилю HTTP/1.1',unknown_host:'Host не совпадает с маршрутом',invalid_forwarding_chain:'Не удалось проверить цепочку доверенных proxy',connection_capacity:'Достигнут лимит соединений',request_body_limit:'Превышен лимит передаваемого тела'} as Record<string,string>)[value]||value
+export const wafReasonLabel=(value:string)=>({request_rate:'Превышен лимит запросов',rate_limit_cooldown:'Действует пятисекундная блокировка по лимиту запросов',request_rate_repeated:'Повторные превышения лимита запросов',active_ban:'Действует временный бан',autoban:'Временный автобан за повторные превышения',waf_state_unavailable:'Состояние WAF недоступно',ip_state_capacity:'Исчерпан бюджет IP-состояний',ban_state_capacity:'Исчерпан бюджет временных банов',checker_rate_exception:'Исключение checker из rate limit',unsupported_protocol:'Протокол не поддерживается этим HTTP-профилем',unsupported_request_profile:'Запрос не соответствует профилю HTTP/1.1',unknown_host:'Host не совпадает с маршрутом',invalid_forwarding_chain:'Не удалось проверить цепочку доверенных proxy',connection_capacity:'Достигнут лимит соединений',request_body_limit:'Превышен лимит передаваемого тела'} as Record<string,string>)[value]||value
 export const captureReasonLabel=(value:string)=>({metadata_only:'Для маршрута включена запись только метаданных.',stream_read_error:'Передача тела прервана.',encoded_body_not_decoded:'Сжатое тело не декодируется этим профилем capture.',body_not_fully_observed:'Тело ещё не получено полностью.',truncated_body_redaction_not_complete:'Лимит захвата достигнут; полное редактирование тела невозможно, поэтому байты не сохранены.',unsupported_binary_redaction:'Этот бинарный формат не поддерживает безопасное редактирование.',unsupported_content_type:'Тип тела не поддерживается для безопасного захвата.',invalid_json_redaction:'JSON не удалось безопасно отредактировать.',json_depth_budget:'Превышена допустимая глубина JSON.',invalid_form_redaction:'Поля формы не удалось безопасно отредактировать.',redacted_representation_exceeds_budget:'Отредактированное тело превышает лимит захвата.',in_progress:'Передача продолжается; доступны промежуточные счётчики.',websocket_frames_not_captured:'Сохраняются handshake и счётчики WebSocket; кадры не захватываются.',content_metadata_budget:'Метаданные Content-Type или Content-Encoding превышают лимит.'} as Record<string,string>)[value]||value
 
 

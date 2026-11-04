@@ -44,33 +44,7 @@ func policyDefaults(p Policy) Policy {
 		if r.Capture.MaxBodyBytes == 0 {
 			r.Capture.MaxBodyBytes = d.Capture.MaxBodyBytes
 		}
-		if r.WAF.Mode == "" {
-			r.WAF.Mode = d.WAF.Mode
-		}
-		if r.WAF.RatePerSecond == 0 {
-			r.WAF.RatePerSecond = d.WAF.RatePerSecond
-		}
-		if r.WAF.Burst == 0 {
-			r.WAF.Burst = d.WAF.Burst
-		}
-		if r.WAF.ViolationThreshold == 0 {
-			r.WAF.ViolationThreshold = d.WAF.ViolationThreshold
-		}
-		if r.WAF.ViolationWindowSeconds == 0 {
-			r.WAF.ViolationWindowSeconds = d.WAF.ViolationWindowSeconds
-		}
-		if r.WAF.BanTTLSeconds == 0 {
-			r.WAF.BanTTLSeconds = d.WAF.BanTTLSeconds
-		}
-		if r.WAF.MaxIPStates == 0 {
-			r.WAF.MaxIPStates = d.WAF.MaxIPStates
-		}
-		if r.WAF.StateTTLSeconds == 0 {
-			r.WAF.StateTTLSeconds = d.WAF.StateTTLSeconds
-		}
-		if r.WAF.OverflowMode == "" {
-			r.WAF.OverflowMode = d.WAF.OverflowMode
-		}
+		r.WAF = defaultWAFPolicy(r.WAF, d.WAF)
 		if r.Limits.MaxConcurrent == 0 {
 			r.Limits.MaxConcurrent = d.Limits.MaxConcurrent
 		}
@@ -93,6 +67,40 @@ func policyDefaults(p Policy) Policy {
 	return p
 }
 
+func defaultWAFPolicy(w, defaults WAFPolicy) WAFPolicy {
+	if w.Mode == wafRateLimitMode {
+		return WAFPolicy{Mode: w.Mode, RatePerSecond: w.RatePerSecond, MaxIPStates: defaults.MaxIPStates, OverflowMode: defaults.OverflowMode}
+	}
+	if w.Mode == "" {
+		w.Mode = defaults.Mode
+	}
+	if w.RatePerSecond == 0 {
+		w.RatePerSecond = defaults.RatePerSecond
+	}
+	if w.Burst == 0 {
+		w.Burst = defaults.Burst
+	}
+	if w.ViolationThreshold == 0 {
+		w.ViolationThreshold = defaults.ViolationThreshold
+	}
+	if w.ViolationWindowSeconds == 0 {
+		w.ViolationWindowSeconds = defaults.ViolationWindowSeconds
+	}
+	if w.BanTTLSeconds == 0 {
+		w.BanTTLSeconds = defaults.BanTTLSeconds
+	}
+	if w.MaxIPStates == 0 {
+		w.MaxIPStates = defaults.MaxIPStates
+	}
+	if w.StateTTLSeconds == 0 {
+		w.StateTTLSeconds = defaults.StateTTLSeconds
+	}
+	if w.OverflowMode == "" {
+		w.OverflowMode = defaults.OverflowMode
+	}
+	return w
+}
+
 func NormalizePolicy(p Policy) (Policy, error) {
 	p = policyDefaults(p)
 	return p, ValidatePolicy(p)
@@ -113,6 +121,7 @@ func ValidatePolicy(p Policy) error {
 		return errors.New("invalid policy schema, revision or route budget")
 	}
 	ids, listeners, scopes := map[string]bool{}, map[string]bool{}, map[string]string{}
+	simpleServices := map[string]bool{}
 	binds := map[string][]netip.Addr{}
 	for _, r := range p.Routes {
 		if !identifier.MatchString(r.ID) || !identifier.MatchString(r.ServiceID) || !identifier.MatchString(r.Component) || ids[r.ID] {
@@ -210,20 +219,14 @@ func ValidatePolicy(p Policy) error {
 			}
 		}
 		w := r.WAF
-		if w.Mode != "off" && w.Mode != "observe_only" && w.Mode != "enforce" {
-			return errors.New("invalid WAF mode")
+		if err := validateWAFPolicy(w); err != nil {
+			return err
 		}
-		if math.IsNaN(w.RatePerSecond) || math.IsInf(w.RatePerSecond, 0) || w.RatePerSecond <= 0 || w.RatePerSecond > 100000 || w.Burst < 1 || w.Burst > 100000 || w.ViolationThreshold < 1 || w.ViolationThreshold > 10000 || w.ViolationWindowSeconds < 1 || w.ViolationWindowSeconds > 3600 || w.BanTTLSeconds < 1 || w.BanTTLSeconds > 3600 || w.MaxIPStates < 1 || w.MaxIPStates > 65536 || w.StateTTLSeconds < 1 || w.StateTTLSeconds > 3600 || w.OverflowMode != "reject_new" {
-			return errors.New("WAF limits outside supported bounds; explicit reject_new overflow required")
+		simple := w.Mode == wafRateLimitMode
+		if previous, ok := simpleServices[r.ServiceID]; ok && previous != simple {
+			return errors.New("simple rate limit must cover every route of the service")
 		}
-		if float64(w.StateTTLSeconds) < float64(w.Burst)/w.RatePerSecond || w.StateTTLSeconds < w.ViolationWindowSeconds {
-			return errors.New("IP state TTL must cover bucket refill and violation window")
-		}
-		for _, ex := range w.Exceptions {
-			if _, err := normalizedPrefix(ex.CIDR); err != nil || (!ex.BypassRate && !ex.BypassBan) || len(ex.Comment) > 500 {
-				return errors.New("invalid checker exception")
-			}
-		}
+		simpleServices[r.ServiceID] = simple
 		if !w.RouteSpecific {
 			b, _ := json.Marshal(w)
 			if previous, ok := scopes[r.ServiceID]; ok && previous != string(b) {
@@ -255,6 +258,30 @@ func ValidatePolicy(p Policy) error {
 		}
 	}
 
+	return nil
+}
+
+func validateWAFPolicy(w WAFPolicy) error {
+	if w.Mode == wafRateLimitMode {
+		if math.Trunc(w.RatePerSecond) != w.RatePerSecond || w.RatePerSecond < 1 || w.RatePerSecond > 100000 || w.RouteSpecific || len(w.Exceptions) != 0 {
+			return errors.New("simple rate limit requires a whole number from 1 to 100000 requests per second and service-wide scope")
+		}
+		return nil
+	}
+	if w.Mode != "off" && w.Mode != "observe_only" && w.Mode != "enforce" {
+		return errors.New("invalid WAF mode")
+	}
+	if math.IsNaN(w.RatePerSecond) || math.IsInf(w.RatePerSecond, 0) || w.RatePerSecond <= 0 || w.RatePerSecond > 100000 || w.Burst < 1 || w.Burst > 100000 || w.ViolationThreshold < 1 || w.ViolationThreshold > 10000 || w.ViolationWindowSeconds < 1 || w.ViolationWindowSeconds > 3600 || w.BanTTLSeconds < 1 || w.BanTTLSeconds > 3600 || w.MaxIPStates < 1 || w.MaxIPStates > 65536 || w.StateTTLSeconds < 1 || w.StateTTLSeconds > 3600 || w.OverflowMode != "reject_new" {
+		return errors.New("WAF limits outside supported bounds; explicit reject_new overflow required")
+	}
+	if float64(w.StateTTLSeconds) < float64(w.Burst)/w.RatePerSecond || w.StateTTLSeconds < w.ViolationWindowSeconds {
+		return errors.New("IP state TTL must cover bucket refill and violation window")
+	}
+	for _, ex := range w.Exceptions {
+		if _, err := normalizedPrefix(ex.CIDR); err != nil || (!ex.BypassRate && !ex.BypassBan) || len(ex.Comment) > 500 {
+			return errors.New("invalid checker exception")
+		}
+	}
 	return nil
 }
 
