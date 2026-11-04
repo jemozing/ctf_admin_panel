@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import {proxyCutoverApplicationEvidence,proxyCutoverGroupEvidence,proxyCutoverGroupRequest,proxyCutoverGroupTargets,proxyCutoverUpdateSettings,proxyCutoverListener,proxyCutoverRoutes,proxyListenAddress,proxyLoopbackListener,proxyRouteChanges,proxyRouteDraft,proxyRouteID,proxyRouteInput,proxyServiceRatePolicy,trafficBytes,trafficHex,trafficQuery,wafBlocks} from './proxyTypes.ts'
-import type {ProxyCutoverContainer,ProxyCutoverDraftTarget,ProxyCutoverTargets,ProxyRoute,TrafficBody,TrafficFilters,WafPolicy} from './proxyTypes.ts'
+import type {ProxyCutoverContainer,ProxyCutoverDraftTarget,ProxyCutoverTargets,ProxyRoute,RouteLimits,TrafficBody,TrafficFilters,WafPolicy} from './proxyTypes.ts'
 
 const filters:TrafficFilters={services:[],route:'',from:'',until:'',ip:'',method:'',status:'',url:'',waf:''}
 const body:TrafficBody={observed_bytes:0,captured_bytes:0,truncated:false}
-const route:ProxyRoute={id:'route-test',service_id:'game',component:'web',listen:'0.0.0.0:18081',upstream:'http://127.0.0.1:18011',protocol:'http1',capture:{mode:'metadata',max_body_bytes:65536,redact_headers:[],redact_query_fields:[],redact_body_fields:[],body_patterns:[]},waf:{mode:'observe_only',rate_per_second:20,burst:40,violation_threshold:10,violation_window_seconds:60,ban_ttl_seconds:60,max_ip_states:4096,state_ttl_seconds:300,overflow_mode:'reject_new',exceptions:[]},limits:{max_concurrent:128,max_header_bytes:65536,read_header_timeout_seconds:5,upstream_response_header_timeout_seconds:30,idle_timeout_seconds:60,max_connection_seconds:300,max_body_bytes:0}}
+const route:ProxyRoute & {limits:RouteLimits}={id:'route-test',service_id:'game',component:'web',listen:'0.0.0.0:18081',upstream:'http://127.0.0.1:18011',protocol:'http1',capture:{mode:'metadata',max_body_bytes:65536,redact_headers:[],redact_query_fields:[],redact_body_fields:[],body_patterns:[]},waf:{mode:'observe_only',rate_per_second:20,burst:40,violation_threshold:10,violation_window_seconds:60,ban_ttl_seconds:60,max_ip_states:4096,state_ttl_seconds:300,overflow_mode:'reject_new',exceptions:[]},limits:{max_concurrent:128,max_header_bytes:65536,read_header_timeout_seconds:5,upstream_response_header_timeout_seconds:30,idle_timeout_seconds:60,max_connection_seconds:300,max_body_bytes:0}}
 
 test('simple rate policy replaces every WAF scope of its service and requires checker verification',()=>{
   const first=proxyRouteInput(route,[])
@@ -71,6 +71,13 @@ test('editing a route selects its registered container port rather than its publ
   }
   assert.equal(proxyRouteInput(route,[]).upstream_port,0)
   assert.equal(proxyListenAddress('::1',18081),'[::1]:18081')
+})
+
+test('editing a route defaults an omitted request body limit to zero and preserves an explicit limit',()=>{
+  const limits:ProxyRoute['limits']={...route.limits}
+  delete limits.max_body_bytes
+  assert.deepEqual(proxyRouteInput({...route,limits},[]).limits,{...limits,max_body_bytes:0})
+  assert.equal(proxyRouteInput({...route,limits:{...limits,max_body_bytes:4096}},[]).limits.max_body_bytes,4096)
 })
 
 test('direct publication observation requires a literal loopback listener',()=>{

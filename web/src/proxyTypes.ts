@@ -7,7 +7,7 @@ export type ProxyProtocol = 'http1'|'https1'|'https2'
 export type ProxyTLSRoutePolicy = {certificate_id:string}
 export type ProxyTLSCertificate = {id:string;dns_names:string[];ip_addresses:string[];not_before:string;not_after:string;fingerprint_sha256:string;valid:boolean;error_code?:string}
 export type ProxyTLSCertificates = {certificates:ProxyTLSCertificate[];total:number;truncated:boolean}
-export type ProxyRoute = {id:string;service_id:string;component:string;listen:string;host?:string;upstream:string;protocol:ProxyProtocol;tls?:ProxyTLSRoutePolicy;capture:CapturePolicy;waf:WafPolicy;trusted_proxy_cidrs?:string[];limits:RouteLimits}
+export type ProxyRoute = {id:string;service_id:string;component:string;listen:string;host?:string;upstream:string;protocol:ProxyProtocol;tls?:ProxyTLSRoutePolicy;capture:CapturePolicy;waf:WafPolicy;trusted_proxy_cidrs?:string[];limits:Omit<RouteLimits,'max_body_bytes'> & {max_body_bytes?:number}}
 export type ProxyPolicy = {schema_version:number;revision:number;routes:ProxyRoute[]}
 export type ProxyTarget = {service_id:string;service_name:string;component:string;upstream_port:number;upstream_address:string;private_binding:boolean}
 export type ProxyTargets = {targets:ProxyTarget[];unavailable:{service_id:string;component:string;reason:string}[];listeners?:string[];allowed_listen_ips:string[];allowed_listen_endpoints?:string[];listen_port_min:number;listen_port_max:number;warnings?:string[]}
@@ -29,7 +29,7 @@ export function proxyLoopbackListener(value:string):boolean{
 }
 export function proxyRouteID(prefix='route-'){return prefix+Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join('')}
 export type PolicyView = {policy:ProxyPolicy;desired_revision:number;applied_revision:number;configured:boolean;external_revision?:boolean;error?:string;warnings?:string[]}
-export type ProxyRouteInput = Omit<ProxyRoute,'upstream'> & {upstream_port:number}
+export type ProxyRouteInput = Omit<ProxyRoute,'upstream'|'limits'> & {upstream_port:number;limits:RouteLimits}
 export const wafBlocks=(mode:WafMode)=>mode==='rate_limit'||mode==='enforce'
 
 export function proxyServiceRatePolicy(routes:ProxyRouteInput[],serviceID:string):WafPolicy|undefined{
@@ -154,7 +154,8 @@ export function proxyRouteInput(route:ProxyRoute,targets:ProxyTarget[]):ProxyRou
   // The frozen upstream uses a published HOST port. The browser input selects
   // a registered CONTAINER port, so it must be resolved through approved targets.
   const target=targets.find(value=>value.service_id===route.service_id&&value.component===route.component&&value.upstream_address===route.upstream)
-  return {id:route.id,service_id:route.service_id,component:route.component,listen:route.listen,host:route.host||'',upstream_port:target?.upstream_port||0,protocol:route.protocol,...(route.tls?{tls:{certificate_id:route.tls.certificate_id}}:{}),capture:{...route.capture,redact_headers:route.capture.redact_headers||[],redact_query_fields:route.capture.redact_query_fields||[],redact_body_fields:route.capture.redact_body_fields||[],body_patterns:route.capture.body_patterns||[]},waf:{...route.waf,exceptions:route.waf.exceptions||[]},trusted_proxy_cidrs:route.trusted_proxy_cidrs||[],limits:route.limits}
+  const limits={...route.limits,max_body_bytes:route.limits.max_body_bytes??0}
+  return {id:route.id,service_id:route.service_id,component:route.component,listen:route.listen,host:route.host||'',upstream_port:target?.upstream_port||0,protocol:route.protocol,...(route.tls?{tls:{certificate_id:route.tls.certificate_id}}:{}),capture:{...route.capture,redact_headers:route.capture.redact_headers||[],redact_query_fields:route.capture.redact_query_fields||[],redact_body_fields:route.capture.redact_body_fields||[],body_patterns:route.capture.body_patterns||[]},waf:{...route.waf,exceptions:route.waf.exceptions||[]},trusted_proxy_cidrs:route.trusted_proxy_cidrs||[],limits}
 }
 
 export type ProxyRouteChange = {id:string;kind:'added'|'removed'|'changed';before?:ProxyRoute;after?:ProxyRoute}
