@@ -21,6 +21,7 @@ import (
 
 type cutoverRuntimeDriver interface {
 	Inventory(context.Context, string) ([]docker.Container, error)
+	LoopbackTCPPortReserved(context.Context, []int) (bool, error)
 	Recreate(context.Context, domain.Service, map[string]any, string) error
 	Verify(context.Context, domain.Service, []docker.Container, []docker.Container, string, map[string]any) ([]domain.ContainerRef, error)
 	Health(context.Context, domain.Service) error
@@ -30,6 +31,9 @@ type dockerCutoverDriver struct{ m *Manager }
 
 func (d dockerCutoverDriver) Inventory(ctx context.Context, p string) ([]docker.Container, error) {
 	return d.m.Engine.Inventory(ctx, p)
+}
+func (d dockerCutoverDriver) LoopbackTCPPortReserved(ctx context.Context, ports []int) (bool, error) {
+	return d.m.Engine.LoopbackTCPPortReserved(ctx, ports)
 }
 func (d dockerCutoverDriver) Recreate(ctx context.Context, s domain.Service, model map[string]any, component string) error {
 	d.m.pauseCapture(ctx)

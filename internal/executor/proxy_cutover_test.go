@@ -9,9 +9,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -44,6 +46,30 @@ type fakeCutoverRuntime struct {
 	removedApplication  *docker.Container
 	privateRuntimeDrift bool
 	foreignContainers   []docker.Container
+}
+
+func (f *fakeCutoverRuntime) LoopbackTCPPortReserved(ctx context.Context, ports []int) (bool, error) {
+	containers, err := f.Inventory(ctx, "")
+	return fakeLoopbackTCPPortReserved(containers, ports), err
+}
+
+func fakeLoopbackTCPPortReserved(containers []docker.Container, ports []int) bool {
+	for _, c := range containers {
+		if c.State != "running" && c.State != "paused" && c.State != "restarting" {
+			continue
+		}
+		for _, raw := range c.Ports {
+			if strings.HasPrefix(raw, ":") && !strings.HasPrefix(raw, "::") {
+				raw = "0.0.0.0" + raw
+			}
+			host, port, _, _, ok := privatePublication(raw)
+			ip, _ := netip.ParseAddr(host)
+			if ok && slices.Contains(ports, port) && (ip.IsUnspecified() || ip.IsLoopback()) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (f *fakeCutoverRuntime) Inventory(ctx context.Context, project string) ([]docker.Container, error) {

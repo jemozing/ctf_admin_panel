@@ -10,7 +10,6 @@ import (
 	"slices"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/ctf-service-manager/ctf-service-manager/internal/docker"
@@ -692,31 +691,12 @@ func (m *Manager) cutoverPrivatePortAvailable(ctx context.Context, port int) err
 	return m.cutoverPrivatePortsAvailable(ctx, []int{port})
 }
 func (m *Manager) cutoverPrivatePortsAvailable(ctx context.Context, ports []int) error {
-	wanted := map[int]bool{}
-	for _, p := range ports {
-		wanted[p] = true
-	}
-	containers, err := m.cutoverDriver().Inventory(ctx, "")
+	reserved, err := m.cutoverDriver().LoopbackTCPPortReserved(ctx, ports)
 	if err != nil {
-		return errors.New("global Docker port reservation inventory is unavailable")
+		return proxyInput("Docker port reservations could not be checked; retry the transfer preview")
 	}
-	for _, c := range containers {
-		if c.State != "running" && c.State != "paused" && c.State != "restarting" {
-			continue
-		}
-		for _, raw := range c.Ports {
-			host, published, _, _, ok := privatePublication(raw)
-			if !ok && strings.HasPrefix(raw, ":") && !strings.HasPrefix(raw, "::") {
-				host, published, _, _, ok = privatePublication("0.0.0.0" + raw)
-			}
-			if !ok || !wanted[published] {
-				continue
-			}
-			ip, e := netip.ParseAddr(host)
-			if e == nil && (ip.Unmap().IsUnspecified() || ip.Unmap().IsLoopback()) {
-				return proxyInput("Private backend port is already reserved by a Docker publication; choose another approved port")
-			}
-		}
+	if reserved {
+		return proxyInput("Private backend port is already reserved by a Docker publication; choose another approved port")
 	}
 	return nil
 }

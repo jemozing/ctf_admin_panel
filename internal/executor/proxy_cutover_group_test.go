@@ -32,6 +32,11 @@ type groupCutoverRuntime struct {
 	privateDrift            bool
 }
 
+func (g *groupCutoverRuntime) LoopbackTCPPortReserved(ctx context.Context, ports []int) (bool, error) {
+	containers, err := g.Inventory(ctx, "")
+	return fakeLoopbackTCPPortReserved(containers, ports), err
+}
+
 func (g *groupCutoverRuntime) Inventory(_ context.Context, _ string) ([]docker.Container, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
