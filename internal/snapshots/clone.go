@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"path"
 
 	"github.com/ctf-service-manager/ctf-service-manager/internal/domain"
 	"github.com/ctf-service-manager/ctf-service-manager/internal/filesystem"
@@ -17,6 +18,19 @@ import (
 // active tree. Original ownership and modes stay in the manifest, rather than
 // being replaced with the normalized physical snapshot permissions.
 func (s *Store) Clone(ctx context.Context, sourceID domain.ID, metadata domain.Snapshot, managed []domain.ManagedPath) (domain.Snapshot, error) {
+	return s.clone(ctx, sourceID, metadata, managed, "", nil)
+}
+
+// CloneWithFile creates a new snapshot with one regular file replaced. Both the
+// original snapshot and all captured ownership and permissions remain intact.
+func (s *Store) CloneWithFile(ctx context.Context, sourceID domain.ID, metadata domain.Snapshot, managed []domain.ManagedPath, name string, data []byte) (domain.Snapshot, error) {
+	if err := domain.ValidateRelativePath(name); err != nil {
+		return domain.Snapshot{}, err
+	}
+	return s.clone(ctx, sourceID, metadata, managed, name, data)
+}
+
+func (s *Store) clone(ctx context.Context, sourceID domain.ID, metadata domain.Snapshot, managed []domain.ManagedPath, name string, data []byte) (domain.Snapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return domain.Snapshot{}, err
 	}
@@ -32,6 +46,13 @@ func (s *Store) Clone(ctx context.Context, sourceID domain.ID, metadata domain.S
 	}
 	if metadata.ID == source.ID || metadata.ServiceID != source.ServiceID || metadata.FileMapRevision != source.FileMapRevision {
 		return domain.Snapshot{}, errors.New("snapshot clone identity or file-map mismatch")
+	}
+	manifest := source.Manifest
+	if name != "" {
+		manifest, err = manifest.WithFileContents(name, data)
+		if err != nil {
+			return domain.Snapshot{}, err
+		}
 	}
 	if err := s.root.Mkdir(string(metadata.ID), 0700); err != nil {
 		return domain.Snapshot{}, err
@@ -54,8 +75,13 @@ func (s *Store) Clone(ctx context.Context, sourceID domain.ID, metadata domain.S
 			return domain.Snapshot{}, errors.New("snapshot clone content or managed paths changed")
 		}
 	}
-	metadata.Manifest = source.Manifest
-	metadata.ManifestDigest = source.ManifestDigest
+	if name != "" {
+		if err := replaceClonedFile(to, name, data); err != nil {
+			return domain.Snapshot{}, err
+		}
+	}
+	metadata.Manifest = manifest
+	metadata.ManifestDigest = manifest.Digest()
 	metadata.State = domain.SnapshotComplete
 	if err := metadata.Validate(); err != nil {
 		return domain.Snapshot{}, err
@@ -100,4 +126,39 @@ func (s *Store) Clone(ctx context.Context, sourceID domain.ID, metadata domain.S
 		return domain.Snapshot{}, err
 	}
 	return metadata, nil
+}
+
+func replaceClonedFile(content, name string, data []byte) error {
+	// Capture created the private tree and verified this path as a regular file.
+	root, err := os.OpenRoot(content)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	if err := root.Remove(name); err != nil {
+		return err
+	}
+	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0400)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if _, err := file.Write(data); err != nil {
+		return err
+	}
+	if err := file.Chmod(0400); err != nil {
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	parent, err := root.OpenRoot(path.Dir(name))
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	return syncDirectory(parent)
 }

@@ -498,7 +498,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request, current session)
 		return
 	}
 	var input transport.SubmitRequest
-	if !decodeBody(w, r, &input) {
+	if !decodeOperationBody(w, r, current, &input) {
 		return
 	}
 	if current.User.Role != RoleAdmin && (input.Action == domain.OperationPrepareCompose || input.ConfirmComposeChange) {
@@ -575,12 +575,24 @@ func method(w http.ResponseWriter, r *http.Request, want string) bool {
 	return false
 }
 func decodeBody(w http.ResponseWriter, r *http.Request, out any) bool {
+	return decodeBodyLimit(w, r, out, 16*1024)
+}
+
+func decodeOperationBody(w http.ResponseWriter, r *http.Request, current session, out *transport.SubmitRequest) bool {
+	if current.User.Role == RoleAdmin {
+		// A Compose draft may need up to six JSON bytes per input byte.
+		return decodeBodyLimit(w, r, out, 6*transport.MaxComposeDraftBytes+16*1024)
+	}
+	return decodeBody(w, r, out)
+}
+
+func decodeBodyLimit(w http.ResponseWriter, r *http.Request, out any, limit int64) bool {
 	media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || media != "application/json" {
 		apiError(w, 415, "invalid_content_type", "Content-Type must be application/json")
 		return false
 	}
-	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024))
+	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, limit))
 	d.DisallowUnknownFields()
 	if err = d.Decode(out); err != nil {
 		var large *http.MaxBytesError

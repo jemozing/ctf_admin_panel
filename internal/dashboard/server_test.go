@@ -38,6 +38,8 @@ func testServer(t *testing.T) (*Server, *atomic.Int32) {
 		switch r.URL.Path {
 		case "/v1/health":
 			w.Write([]byte(`{"status":"ok","schema_version":1}`))
+		case "/v1/services/service-test/compose":
+			w.Write([]byte(`{"path":"compose.yaml","content":"services:\n  web: {}\n","revision":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`))
 		case "/v1/services", "/v1/operations":
 			if r.Method == http.MethodPost {
 				submits.Add(1)
@@ -327,9 +329,25 @@ func TestComposeRevisionPreparationAndSwitchRequireAdmin(t *testing.T) {
 	admin, csrf, _ := loginAs(t, s, "admin")
 	createAccount(t, s, admin, csrf, "compose-defender", RoleDefender)
 	defender, token, _ := loginAs(t, s, "compose-defender")
+	const composePath = "/api/services/service-test/compose"
+	if res := request(t, s, "GET", composePath, nil, nil, ""); res.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous Compose read: %d %s", res.Code, res.Body)
+	}
+	if res := request(t, s, "GET", composePath, nil, defender, ""); res.Code != http.StatusForbidden {
+		t.Fatalf("defender Compose read: %d %s", res.Code, res.Body)
+	}
+	if res := request(t, s, "GET", composePath, nil, admin, ""); res.Code != http.StatusOK ||
+		res.Header().Get("Cache-Control") != "no-store" || !strings.Contains(res.Body.String(), `"path":"compose.yaml"`) {
+		t.Fatalf("admin Compose read: %d %s", res.Code, res.Body)
+	}
+	if res := request(t, s, "GET", composePath+"?path=.env", nil, admin, ""); res.Code != http.StatusBadRequest {
+		t.Fatalf("Compose read accepted a path selector: %d %s", res.Code, res.Body)
+	}
+	revision := "sha256:" + strings.Repeat("a", 64)
 	for _, endpoint := range []string{"/api/preview", "/api/operations"} {
 		for _, body := range []map[string]any{
 			{"action": "prepare_compose", "compose_from_git": true},
+			{"action": "prepare_compose", "compose_draft": map[string]string{"content": "services: {}", "revision": revision}},
 			{"action": "deploy", "release_id": "release-new", "confirm_compose_change": true},
 			{"action": "rollback", "release_id": "release-old", "confirm_compose_change": true},
 		} {
@@ -340,5 +358,15 @@ func TestComposeRevisionPreparationAndSwitchRequireAdmin(t *testing.T) {
 				t.Fatalf("%s accepted %s for Defender: %d %s", endpoint, body["action"], res.Code, res.Body)
 			}
 		}
+	}
+
+	body := map[string]any{
+		"service_id": "service-test", "action": "prepare_compose", "idempotency_key": "compose-large-draft",
+		"compose_draft": map[string]string{"content": "services: {}\n" + strings.Repeat("# comment\n", 1800), "revision": revision},
+	}
+	// The stub returns 501 when the request reaches the executor. A valid
+	// Compose draft larger than the normal dashboard body limit must get there.
+	if res := request(t, s, "POST", "/api/operations", body, admin, csrf); res.Code != http.StatusNotImplemented {
+		t.Fatalf("admin Compose submit: %d %s", res.Code, res.Body)
 	}
 }

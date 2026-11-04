@@ -48,6 +48,7 @@ type SubmitRequest struct {
 	ConfirmDataCompatibility bool                 `json:"confirm_data_compatibility,omitempty"`
 	AcceptFileDrift          bool                 `json:"accept_file_drift,omitempty"`
 	ComposeFromGit           bool                 `json:"compose_from_git,omitempty"`
+	ComposeDraft             *ComposeDraft        `json:"compose_draft,omitempty"`
 	ConfirmComposeChange     bool                 `json:"confirm_compose_change,omitempty"`
 	RecoveryOperationID      domain.ID            `json:"recovery_operation_id,omitempty"`
 }
@@ -95,6 +96,14 @@ func (r SubmitRequest) Validate() error {
 	}
 	if r.ComposeFromGit && r.Action != domain.OperationPrepareCompose {
 		return errors.New("compose_from_git is only supported for prepare_compose")
+	}
+	if r.ComposeDraft != nil {
+		if r.Action != domain.OperationPrepareCompose || r.ComposeFromGit {
+			return errors.New("compose_draft is only supported for prepare_compose without compose_from_git")
+		}
+		if err := r.ComposeDraft.validate(); err != nil {
+			return err
+		}
 	}
 	if r.ConfirmComposeChange && r.Action != domain.OperationDeploy && r.Action != domain.OperationRollback {
 		return errors.New("confirm_compose_change is only supported for deploy and rollback")
@@ -300,6 +309,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		s.diagnosticsEndpoint(w, r, id)
 		return
+	case strings.HasPrefix(r.URL.Path, "/v1/services/") && strings.Count(r.URL.Path, "/") == 4 && strings.HasSuffix(r.URL.Path, "/compose"):
+		s.composeDocumentEndpoint(w, r)
+		return
 	case strings.HasPrefix(r.URL.Path, "/v1/services/") && strings.Contains(r.URL.Path, "/checks"):
 		s.healthCheckRoutes(w, r)
 		return
@@ -470,6 +482,13 @@ func decodeSubmit(data []byte, out *SubmitRequest) error {
 		seen[key] = true
 		switch key {
 		case "service_id", "action", "release_id", "idempotency_key", "initiator", "candidate_id", "snapshot_id", "plan_digest", "confirm_data_compatibility", "accept_file_drift", "compose_from_git", "confirm_compose_change", "recovery_operation_id":
+		case "compose_draft":
+			draft, err := decodeComposeDraft(d)
+			if err != nil {
+				return err
+			}
+			out.ComposeDraft = &draft
+			continue
 		default:
 			return fmt.Errorf("unknown request field")
 		}
@@ -553,9 +572,14 @@ func methodNotAllowed(w http.ResponseWriter, allow string) {
 }
 func backendError(w http.ResponseWriter, err error) {
 	var portConflict *ComposePortConflict
+	var composeEditor *ComposeEditorError
 	switch {
 	case errors.As(err, &portConflict):
 		writeError(w, http.StatusConflict, "compose_port_conflict", portConflict.Error())
+	case errors.Is(err, ErrComposeEditorStale):
+		writeError(w, http.StatusConflict, "compose_editor_stale", ErrComposeEditorStale.Error())
+	case errors.As(err, &composeEditor):
+		writeError(w, http.StatusUnprocessableEntity, "compose_editor_error", composeEditor.Message)
 	case errors.Is(err, store.ErrNotFound):
 		writeError(w, http.StatusNotFound, "not_found", "requested object not found")
 	case errors.Is(err, store.ErrIdempotencyConflict), errors.Is(err, store.ErrConflict), errors.Is(err, store.ErrBusy):
