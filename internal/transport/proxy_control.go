@@ -84,11 +84,12 @@ type ProxyUnavailableTarget struct {
 	Reason    string    `json:"reason"`
 }
 type ProxyTargets struct {
-	Targets          []ProxyTarget            `json:"targets"`
-	Unavailable      []ProxyUnavailableTarget `json:"unavailable"`
-	AllowedListenIPs []string                 `json:"allowed_listen_ips"`
-	ListenPortMin    int                      `json:"listen_port_min"`
-	ListenPortMax    int                      `json:"listen_port_max"`
+	Targets                []ProxyTarget            `json:"targets"`
+	Unavailable            []ProxyUnavailableTarget `json:"unavailable"`
+	AllowedListenIPs       []string                 `json:"allowed_listen_ips"`
+	AllowedListenEndpoints []string                 `json:"allowed_listen_endpoints,omitempty"`
+	ListenPortMin          int                      `json:"listen_port_min"`
+	ListenPortMax          int                      `json:"listen_port_max"`
 }
 type ProxyBanRequest struct {
 	proxyengine.BanRequest

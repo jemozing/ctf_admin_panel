@@ -20,6 +20,7 @@ type ProxyPolicy struct {
 	TrafficURL                    string   `json:"traffic_url"`
 	TrafficTokenFile              string   `json:"traffic_token_file"`
 	AllowedListenIPs              []string `json:"allowed_listen_ips"`
+	AllowedListenEndpoints        []string `json:"allowed_listen_endpoints,omitempty"`
 	ListenPortMin                 int      `json:"listen_port_min"`
 	ListenPortMax                 int      `json:"listen_port_max"`
 	BackendPortMin                int      `json:"backend_port_min,omitempty"`
@@ -27,12 +28,48 @@ type ProxyPolicy struct {
 	ProxyGID                      int      `json:"proxy_gid"`
 }
 
+// AllowsListener accepts an exact opt-in endpoint or an address in the
+// existing listen range. Adding an exact endpoint never extends the range.
+func (p ProxyPolicy) AllowsListener(ip netip.Addr, port int) bool {
+	if !ip.IsValid() || ip.Zone() != "" || ip.Unmap().IsMulticast() || port < 1024 || port > 65535 {
+		return false
+	}
+	ip = ip.Unmap()
+	endpoint := netip.AddrPortFrom(ip, uint16(port)).String()
+	for _, allowed := range p.AllowedListenEndpoints {
+		if allowed == endpoint {
+			return true
+		}
+	}
+	if port < p.ListenPortMin || port > p.ListenPortMax {
+		return false
+	}
+	for _, raw := range p.AllowedListenIPs {
+		if allowed, err := netip.ParseAddr(raw); err == nil && allowed.Unmap() == ip {
+			return true
+		}
+	}
+	return false
+}
+
+func (p ProxyPolicy) listenerPortsOverlap(min, max int) bool {
+	if min <= p.ListenPortMax && p.ListenPortMin <= max {
+		return true
+	}
+	for _, raw := range p.AllowedListenEndpoints {
+		if endpoint, err := netip.ParseAddrPort(raw); err == nil && min <= int(endpoint.Port()) && int(endpoint.Port()) <= max {
+			return true
+		}
+	}
+	return false
+}
+
 // BackendPorts is a separate host-loopback allocation boundary. Older opt-in
 // installations receive the conservative default without widening listeners.
 func (p ProxyPolicy) BackendPorts() (int, int) {
 	if p.BackendPortMin == 0 && p.BackendPortMax == 0 {
 		for _, first := range []int{29080, 39080, 49080} {
-			if first+31 < p.ListenPortMin || p.ListenPortMax < first {
+			if !p.listenerPortsOverlap(first, first+31) {
 				return first, first + 31
 			}
 		}
@@ -80,10 +117,6 @@ func (p ProxyPolicy) Validate(c Config) error {
 	if len(p.AllowedListenIPs) == 0 || len(p.AllowedListenIPs) > 16 || p.ListenPortMin < 1024 || p.ListenPortMax > 65535 || p.ListenPortMin > p.ListenPortMax || p.ListenPortMax-p.ListenPortMin > 1023 {
 		return errors.New("proxy requires approved listen IPs and a bounded unprivileged port range")
 	}
-	backendMin, backendMax := p.BackendPorts()
-	if backendMin < 1024 || backendMax > 65535 || backendMin > backendMax || backendMax-backendMin > 1023 || (backendMin <= p.ListenPortMax && p.ListenPortMin <= backendMax) {
-		return errors.New("proxy backend ports must use a separate bounded unprivileged range")
-	}
 	seen := map[netip.Addr]bool{}
 	for _, raw := range p.AllowedListenIPs {
 		ip, err := netip.ParseAddr(raw)
@@ -91,6 +124,22 @@ func (p ProxyPolicy) Validate(c Config) error {
 			return errors.New("proxy listen addresses must be unique literal IPs")
 		}
 		seen[ip.Unmap()] = true
+	}
+	if len(p.AllowedListenEndpoints) > 32 {
+		return errors.New("proxy allows at most 32 exact listen endpoints")
+	}
+	exact := map[netip.AddrPort]bool{}
+	for _, raw := range p.AllowedListenEndpoints {
+		endpoint, err := netip.ParseAddrPort(raw)
+		ip := endpoint.Addr()
+		if err != nil || ip.Zone() != "" || ip.IsMulticast() || ip.Is4In6() || endpoint.Port() < 1024 || endpoint.String() != raw || exact[endpoint] {
+			return errors.New("proxy listen endpoints must be unique canonical literal IP:port pairs with unprivileged ports")
+		}
+		exact[endpoint] = true
+	}
+	backendMin, backendMax := p.BackendPorts()
+	if backendMin < 1024 || backendMax > 65535 || backendMin > backendMax || backendMax-backendMin > 1023 || p.listenerPortsOverlap(backendMin, backendMax) {
+		return errors.New("proxy backend ports must use a separate bounded unprivileged range")
 	}
 	if p.ProxyGID <= 0 || p.ProxyGID == c.WebUID {
 		return errors.New("proxy policy reader group must be non-root and distinct from dashboard UID")

@@ -21,6 +21,7 @@ import (
 
 type cutoverRuntimeDriver interface {
 	Inventory(context.Context, string) ([]docker.Container, error)
+	LoopbackTCPPortReserved(context.Context, []int) (bool, error)
 	Recreate(context.Context, domain.Service, map[string]any, string) error
 	Verify(context.Context, domain.Service, []docker.Container, []docker.Container, string, map[string]any) ([]domain.ContainerRef, error)
 	Health(context.Context, domain.Service) error
@@ -30,6 +31,9 @@ type dockerCutoverDriver struct{ m *Manager }
 
 func (d dockerCutoverDriver) Inventory(ctx context.Context, p string) ([]docker.Container, error) {
 	return d.m.Engine.Inventory(ctx, p)
+}
+func (d dockerCutoverDriver) LoopbackTCPPortReserved(ctx context.Context, ports []int) (bool, error) {
+	return d.m.Engine.LoopbackTCPPortReserved(ctx, ports)
 }
 func (d dockerCutoverDriver) Recreate(ctx context.Context, s domain.Service, model map[string]any, component string) error {
 	d.m.pauseCapture(ctx)
@@ -378,7 +382,7 @@ func (m *Manager) cutoverMixedModel(ctx context.Context, p proxyCutoverProposal,
 		entry := &entries[i]
 		entry.Active = false
 		if c, ok := observed[entry.Component]; ok {
-			if cutoverContainerPortsEqual(c, entry.Original) {
+			if cutoverOriginalPortsEqual(c, *entry, p.Targets) {
 			} else if cutoverContainerPortsEqual(c, entry.Replacement) {
 				entry.Active = true
 			} else {
@@ -482,11 +486,17 @@ func (m *Manager) moveCutoverComponents(ctx context.Context, p proxyCutoverPropo
 		if private {
 			desired = entry.Replacement
 		}
+		matchesDesired := func(current docker.Container) bool {
+			if private {
+				return cutoverContainerPortsEqual(current, entry.Replacement)
+			}
+			return cutoverOriginalPortsEqual(current, entry, p.Targets)
+		}
 
 		alreadyDesired := false
 		for _, current := range fresh {
 			if current.Component == entry.Component {
-				alreadyDesired = cutoverContainerPortsEqual(current, desired)
+				alreadyDesired = matchesDesired(current)
 			}
 		}
 		if alreadyDesired {
@@ -546,6 +556,11 @@ func (m *Manager) moveCutoverComponents(ctx context.Context, p proxyCutoverPropo
 		cancel()
 		if composeErr != nil || observeErr != nil {
 			return errors.Join(composeErr, observeErr)
+		}
+		for _, current := range observed {
+			if current.Component == entry.Component && !matchesDesired(current) {
+				return errors.New("recreated application publications differ from the reviewed listener set")
+			}
 		}
 		refs, e := m.cutoverDriver().Verify(ctx, s, before, observed, entry.Component, model)
 		if e != nil {
@@ -750,10 +765,8 @@ func (m *Manager) ProxyCutoverReturnPreview(ctx context.Context, in transport.Pr
 	}
 	owned := map[string]bool{}
 	for _, r := range origin.Policy.Routes {
-		for _, b := range origin.OriginalBindings {
-			if r.Listen == b && r.ServiceID == string(s.ID) && cutoverHasComponent(origin, r.Component) {
-				owned[r.ID] = true
-			}
+		if cutoverOwnsRoute(origin, r) {
+			owned[r.ID] = true
 		}
 	}
 	wanted := latest.Policy

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -29,6 +30,11 @@ type groupCutoverRuntime struct {
 	inventoryHook           func(int)
 	inventoryCount          int
 	privateDrift            bool
+}
+
+func (g *groupCutoverRuntime) LoopbackTCPPortReserved(ctx context.Context, ports []int) (bool, error) {
+	containers, err := g.Inventory(ctx, "")
+	return fakeLoopbackTCPPortReserved(containers, ports), err
 }
 
 func (g *groupCutoverRuntime) Inventory(_ context.Context, _ string) ([]docker.Container, error) {
@@ -81,7 +87,7 @@ func (g *groupCutoverRuntime) Recreate(_ context.Context, _ domain.Service, mode
 	}
 	c.ID = fmt.Sprintf("%064x", len(g.calls)+100)
 	c.ImageID = settings["image"].(string)
-	c.Ports = cutoverPortStrings(ports)
+	c.Ports = groupFixturePortStrings(ports)
 	c.State = "running"
 	if fail && mode == "foreignmount" {
 		c.Mounts = append([]docker.Mount{}, c.Mounts...)
@@ -143,7 +149,7 @@ func (g *groupCutoverRuntime) Verify(_ context.Context, s domain.Service, before
 			if err != nil {
 				return nil, err
 			}
-			if !cutoverContainerPortsEqual(c, ports) {
+			if !cutoverObservedPortsEqual(c, groupFixturePortStrings(ports)) {
 				return nil, fmt.Errorf("private port settings drift in %s", c.Component)
 			}
 		}
@@ -153,6 +159,22 @@ func (g *groupCutoverRuntime) Verify(_ context.Context, s domain.Service, before
 }
 func (g *groupCutoverRuntime) Health(context.Context, domain.Service) error { return nil }
 
+func groupFixturePortStrings(ports []map[string]any) []string {
+	var expanded []map[string]any
+	for _, port := range ports {
+		if ip, _ := port["host_ip"].(string); ip == "" {
+			for _, wildcard := range []string{"0.0.0.0", "::"} {
+				binding := maps.Clone(port)
+				binding["host_ip"] = wildcard
+				expanded = append(expanded, binding)
+			}
+			continue
+		}
+		expanded = append(expanded, port)
+	}
+	return cutoverPortStrings(expanded)
+}
+
 type groupCutoverFixture struct {
 	*cutoverFixture
 	group     *groupCutoverRuntime
@@ -160,6 +182,10 @@ type groupCutoverFixture struct {
 }
 
 func newGroupCutoverFixture(t *testing.T) *groupCutoverFixture {
+	return newGroupCutoverFixtureWithAppBinding(t, "0.0.0.0")
+}
+
+func newGroupCutoverFixtureWithAppBinding(t *testing.T, hostIP string) *groupCutoverFixture {
 	t.Helper()
 	base := newCutoverFixture(t)
 	s := base.s
@@ -173,7 +199,11 @@ func newGroupCutoverFixture(t *testing.T) *groupCutoverFixture {
 	_ = json.Unmarshal(raw, &config)
 	services := config.Model["services"].(map[string]any)
 	app := services["app"].(map[string]any)
-	app["ports"] = []any{map[string]any{"target": float64(8080), "published": "18080", "host_ip": "0.0.0.0", "protocol": "tcp"}, map[string]any{"target": float64(8081), "published": "18081", "host_ip": "127.0.0.1", "protocol": "tcp"}}
+	appBinding := map[string]any{"target": float64(8080), "published": "18080", "protocol": "tcp"}
+	if hostIP != "" {
+		appBinding["host_ip"] = hostIP
+	}
+	app["ports"] = []any{appBinding, map[string]any{"target": float64(8081), "published": "18081", "host_ip": "127.0.0.1", "protocol": "tcp"}}
 	services["web"] = map[string]any{"image": string(webImage), "ports": []any{map[string]any{"target": float64(9000), "published": "18090", "host_ip": "0.0.0.0", "protocol": "tcp"}}, "volumes": []any{map[string]any{"type": "volume", "source": "web-data", "target": "/data"}}}
 	config.Model["volumes"].(map[string]any)["web-data"] = map[string]any{"name": "web-data", "external": true}
 	encoded, _ := json.Marshal(config)
@@ -207,7 +237,11 @@ func newGroupCutoverFixture(t *testing.T) *groupCutoverFixture {
 		t.Fatal(err)
 	}
 	containers := append([]docker.Container{}, base.driver.containers...)
-	containers[0].Ports = []string{"0.0.0.0:18080->8080/tcp", "127.0.0.1:18081->8081/tcp"}
+	appPorts, err := cutoverModelPorts(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	containers[0].Ports = groupFixturePortStrings(appPorts)
 	containers = append(containers, docker.Container{Component: "web", Project: s.ComposeProject, ID: strings.Repeat("d", 64), ImageID: string(webImage), State: "running", Health: "not_configured", Ports: []string{"0.0.0.0:18090->9000/tcp"}, Mounts: []docker.Mount{{Type: "volume", Source: "web-data", Target: "/data"}}})
 	group := &groupCutoverRuntime{containers: containers, references: map[string]docker.Container{}}
 	for _, c := range containers {
@@ -251,6 +285,83 @@ func (f *groupCutoverFixture) snapshotData(t *testing.T) [][]byte {
 		out = append(out, data)
 	}
 	return out
+}
+
+func TestProxyCutoverGroupImplicitWildcardRestoresExactObservedFamilies(t *testing.T) {
+	for _, dropIPv6 := range []bool{false, true} {
+		name := "dual_stack_restored"
+		if dropIPv6 {
+			name = "missing_family_requires_recovery"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newGroupCutoverFixtureWithAppBinding(t, "")
+			before := f.snapshotData(t)
+			req := f.request()
+			if _, err := f.m.ProxyCutoverPreview(t.Context(), req); err == nil || !strings.Contains(err.Error(), "administrator-approved listener policy") {
+				t.Fatalf("unapproved IPv6 publication was accepted: %v", err)
+			}
+			f.m.Config.Proxy.AllowedListenEndpoints = []string{"[::]:18080"}
+			if _, err := f.m.ProxyCutoverPreview(t.Context(), req); err == nil || !strings.Contains(err.Error(), "Every original binding must be transferred") {
+				t.Fatalf("incomplete wildcard transfer was accepted: %v", err)
+			}
+			ipv6Route := req.Routes[0]
+			ipv6Route.Listen = "[::]:18080"
+			req.Routes = append(req.Routes, ipv6Route)
+			p, err := f.m.ProxyCutoverPreview(t.Context(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(p.Targets[0].OriginalBindings, []string{"0.0.0.0:18080", "[::]:18080"}) {
+				t.Fatalf("expected one target with both wildcard bindings, got %+v", p.Targets)
+			}
+			v := f.confirm(t, p)
+			if v.State != "active" {
+				t.Fatalf("wildcard cutover failed: %+v", v)
+			}
+			overlay, err := f.m.runtimePortOverlay(t.Context(), f.s.ID)
+			if err != nil || !overlay.Active || len(overlay.Entries) == 0 || len(overlay.Entries[0].Original) == 0 || overlay.Entries[0].Original[0]["host_ip"] != nil {
+				t.Fatalf("implicit Compose publication was not retained: %+v %v", overlay, err)
+			}
+			model, err := f.m.runtimeConfiguration(t.Context(), f.s, f.configuration)
+			if err != nil {
+				t.Fatal(err)
+			}
+			app := model["services"].(map[string]any)["app"].(map[string]any)
+			ports, err := cutoverModelPorts(app)
+			if err != nil || !reflect.DeepEqual(ports, overlay.Entries[0].Replacement) {
+				t.Fatalf("later deployments must retain the private backend: %+v %v", ports, err)
+			}
+			back, err := f.m.ProxyCutoverReturnPreview(t.Context(), transport.ProxyCutoverReturnRequest{CutoverID: v.ID, Initiator: "admin"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if dropIPv6 {
+				f.group.after = func(component string) error {
+					if component == "app" {
+						for i := range f.group.containers {
+							c := &f.group.containers[i]
+							if c.Component == "app" {
+								c.Ports = c.Ports[:len(c.Ports)-1] // Sorted IPv6 wildcard is last.
+							}
+						}
+					}
+					return nil
+				}
+			}
+			returned := f.confirm(t, back)
+			if dropIPv6 {
+				if returned.State != "requires_recovery" || !strings.Contains(returned.Error, "publications differ from the reviewed listener set") {
+					t.Fatalf("return accepted a missing wildcard family: %+v", returned)
+				}
+			} else {
+				actual, err := f.group.Inventory(t.Context(), f.s.ComposeProject)
+				if err != nil || returned.State != "returned" || len(actual) == 0 || !reflect.DeepEqual(actual[0].Ports, f.group.references["app"].Ports) {
+					t.Fatalf("original listeners were not restored: %+v %+v %v", returned, actual, err)
+				}
+			}
+			f.assertData(t, before)
+		})
+	}
 }
 
 func TestProxyCutoverGroupMultiPortRoundTripPreservesCurrentReleaseAndData(t *testing.T) {

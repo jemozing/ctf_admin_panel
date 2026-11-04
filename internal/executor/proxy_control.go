@@ -490,7 +490,11 @@ func (m *Manager) proxyServiceTargets(ctx context.Context, s domain.Service) ([]
 	return targets, binding, nil
 }
 func (m *Manager) proxyTargets(ctx context.Context) (transport.ProxyTargets, []proxyBinding, error) {
-	result := transport.ProxyTargets{Targets: []transport.ProxyTarget{}, Unavailable: []transport.ProxyUnavailableTarget{}, AllowedListenIPs: append([]string{}, m.Config.Proxy.AllowedListenIPs...), ListenPortMin: m.Config.Proxy.ListenPortMin, ListenPortMax: m.Config.Proxy.ListenPortMax}
+	result := transport.ProxyTargets{
+		Targets: []transport.ProxyTarget{}, Unavailable: []transport.ProxyUnavailableTarget{},
+		AllowedListenIPs: append([]string{}, m.Config.Proxy.AllowedListenIPs...), AllowedListenEndpoints: append([]string(nil), m.Config.Proxy.AllowedListenEndpoints...),
+		ListenPortMin: m.Config.Proxy.ListenPortMin, ListenPortMax: m.Config.Proxy.ListenPortMax,
+	}
 	if e := m.requireProxy(); e != nil {
 		return result, nil, nil
 	}
@@ -588,18 +592,13 @@ func (m *Manager) ProxyPreview(ctx context.Context, in transport.ProxyPreviewReq
 	for _, r := range latest.Policy.Routes {
 		existing[r.ID] = r
 	}
-	allowed := map[string]bool{}
-	for _, ip := range m.Config.Proxy.AllowedListenIPs {
-		a, _ := netip.ParseAddr(ip)
-		allowed[a.Unmap().String()] = true
-	}
 	observesPublic := false
 	for _, r := range in.Routes {
 		ip, port, e := net.SplitHostPort(r.Listen)
 		addr, ipErr := netip.ParseAddr(ip)
 		p, portErr := strconv.Atoi(port)
-		if e != nil || ipErr != nil || portErr != nil || !allowed[addr.Unmap().String()] || p < m.Config.Proxy.ListenPortMin || p > m.Config.Proxy.ListenPortMax {
-			return empty, proxyInput("Listener is outside the administrator-approved IP/port range")
+		if e != nil || ipErr != nil || portErr != nil || !m.Config.Proxy.AllowsListener(addr, p) {
+			return empty, proxyInput("Listener is outside the administrator-approved IP/port range and exact endpoints")
 		}
 		var target transport.ProxyTarget
 		matches := 0
@@ -635,6 +634,9 @@ func (m *Manager) ProxyPreview(ctx context.Context, in transport.ProxyPreviewReq
 	wanted, err = proxyengine.NormalizePolicy(wanted)
 	if err != nil {
 		return empty, proxyInput(err.Error())
+	}
+	if err = m.validateActiveCutoverRoutes(ctx, wanted); err != nil {
+		return empty, err
 	}
 	var preflight any
 	if err = m.proxyRPC(ctx, "POST", "/v1/preflight", wanted, &preflight); err != nil {

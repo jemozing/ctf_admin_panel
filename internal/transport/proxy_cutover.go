@@ -39,16 +39,17 @@ type ProxyCutoverTarget struct {
 	OriginalBindings []string  `json:"original_bindings"`
 }
 type ProxyCutoverTargets struct {
-	Targets          []ProxyCutoverTarget     `json:"targets"`
-	Unavailable      []ProxyUnavailableTarget `json:"unavailable"`
-	AllowedListenIPs []string                 `json:"allowed_listen_ips"`
-	ListenPortMin    int                      `json:"listen_port_min"`
-	ListenPortMax    int                      `json:"listen_port_max"`
-	BackendPortMin   int                      `json:"backend_port_min"`
-	BackendPortMax   int                      `json:"backend_port_max"`
-	MaxComponents    int                      `json:"max_components"`
-	MaxTargets       int                      `json:"max_targets"`
-	MaxListeners     int                      `json:"max_listeners"`
+	Targets                []ProxyCutoverTarget     `json:"targets"`
+	Unavailable            []ProxyUnavailableTarget `json:"unavailable"`
+	AllowedListenIPs       []string                 `json:"allowed_listen_ips"`
+	AllowedListenEndpoints []string                 `json:"allowed_listen_endpoints,omitempty"`
+	ListenPortMin          int                      `json:"listen_port_min"`
+	ListenPortMax          int                      `json:"listen_port_max"`
+	BackendPortMin         int                      `json:"backend_port_min"`
+	BackendPortMax         int                      `json:"backend_port_max"`
+	MaxComponents          int                      `json:"max_components"`
+	MaxTargets             int                      `json:"max_targets"`
+	MaxListeners           int                      `json:"max_listeners"`
 }
 type ProxyCutoverPreviewRequest struct {
 	ServiceID    domain.ID               `json:"service_id"`

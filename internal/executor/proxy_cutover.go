@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/ctf-service-manager/ctf-service-manager/internal/docker"
@@ -83,6 +83,42 @@ func (m *Manager) requireNoPendingCutover(ctx context.Context) error {
 	for _, record := range records {
 		if cutoverPending(record.State) {
 			return proxyInput("A port transfer is running or requires recovery; return its ports before other changes")
+		}
+	}
+	return nil
+}
+
+func cutoverOwnsRoute(origin proxyCutoverProposal, route proxyengine.Route) bool {
+	return route.ServiceID == string(origin.ServiceID) &&
+		cutoverHasComponent(origin, route.Component) &&
+		slices.Contains(origin.OriginalBindings, route.Listen)
+}
+
+func (m *Manager) validateActiveCutoverRoutes(ctx context.Context, wanted proxyengine.Policy) error {
+	records, err := m.cutoverRecords(ctx)
+	if err != nil {
+		return err
+	}
+	next := make(map[string]proxyengine.Route, len(wanted.Routes))
+	for _, route := range wanted.Routes {
+		next[route.ID] = route
+	}
+	for _, record := range records {
+		if record.State != "active" {
+			continue
+		}
+		var origin proxyCutoverProposal
+		if err := m.Store.Get(ctx, "proxy_cutover_proposal", record.OriginProposalID, &origin); err != nil {
+			return err
+		}
+		for _, route := range origin.Policy.Routes {
+			if !cutoverOwnsRoute(origin, route) {
+				continue
+			}
+			proposed := next[route.ID]
+			if proposed.Listen != route.Listen || proposed.Upstream != route.Upstream || proposed.ServiceID != route.ServiceID || proposed.Component != route.Component {
+				return proxyInput("Use the port return workflow to remove or move a listener owned by an active transfer")
+			}
 		}
 	}
 	return nil
@@ -191,8 +227,8 @@ func cutoverExactIdentities(st runtimeState, actual []docker.Container) error {
 	return nil
 }
 
-// One frozen component may expose several TCP targets and several explicit
-// addresses per target. All of them are part of one service transfer.
+// A service transfer covers every observed TCP listener of the selected
+// component, including both wildcard families when Docker chooses them.
 func (m *Manager) cutoverComponentBindings(s domain.Service, component string, model map[string]any, actual []docker.Container) ([]map[string]any, map[int][]string, error) {
 	role := domain.ComponentRole("")
 	for _, r := range s.Containers {
@@ -209,32 +245,35 @@ func (m *Manager) cutoverComponentBindings(s domain.Service, component string, m
 	if err != nil {
 		return nil, nil, proxyInput(err.Error())
 	}
-	allowed := map[string]bool{}
-	for _, raw := range m.Config.Proxy.AllowedListenIPs {
-		ip, e := netip.ParseAddr(raw)
-		if e == nil {
-			allowed[ip.Unmap().String()] = true
-		}
-	}
-	groups := map[int][]string{}
-	seen := map[string]bool{}
+	type portPair struct{ target, published int }
+	expected := map[portPair]map[netip.Addr]bool{} // true until a configured binding is observed
+	expectedCount := 0
 	for _, p := range ports {
 		target, _ := cutoverPortNumber(p["target"])
 		published, _ := cutoverPortNumber(p["published"])
 		raw, _ := p["host_ip"].(string)
-		ip, e := netip.ParseAddr(raw)
-		if e != nil || ip.Zone() != "" || !allowed[ip.Unmap().String()] || published < m.Config.Proxy.ListenPortMin || published > m.Config.Proxy.ListenPortMax {
-			return nil, nil, proxyInput("Every original binding must be inside the administrator-approved listener range")
+		var ip netip.Addr // Docker chooses the wildcard families when host_ip is omitted.
+		if raw != "" {
+			address, e := netip.ParseAddr(raw)
+			if e != nil || address.Zone() != "" || !m.Config.Proxy.AllowsListener(address, published) {
+				return nil, nil, proxyInput("Every original binding must be inside the administrator-approved listener policy")
+			}
+			ip = address.Unmap()
 		}
-		binding := net.JoinHostPort(ip.Unmap().String(), strconv.Itoa(published))
-		if seen[binding] {
-			return nil, nil, proxyInput("Duplicate publication is ambiguous")
+		pair := portPair{target, published}
+		if expected[pair] == nil {
+			expected[pair] = map[netip.Addr]bool{}
 		}
-		seen[binding] = true
-		groups[target] = append(groups[target], binding)
+		addresses := expected[pair]
+		if _, duplicate := addresses[ip]; duplicate || len(addresses) > 0 && (!ip.IsValid() || addresses[netip.Addr{}]) {
+			return nil, nil, proxyInput("Duplicate or overlapping publication is ambiguous")
+		}
+		addresses[ip] = true
+		expectedCount++
 	}
 	found := 0
-	observed := map[string]bool{}
+	groups := map[int][]string{}
+	seen := map[string]bool{}
 	for _, c := range actual {
 		if c.Component != component {
 			continue
@@ -244,19 +283,33 @@ func (m *Manager) cutoverComponentBindings(s domain.Service, component string, m
 			return nil, nil, proxyInput("Every selected application must be running before preview")
 		}
 		for _, raw := range c.Ports {
-			ip, pub, target, _, ok := privatePublication(raw)
-			binding := net.JoinHostPort(ip, strconv.Itoa(pub))
-			matched := false
-			for _, expected := range groups[target] {
-				matched = matched || expected == binding
+			host, published, target, _, ok := privatePublication(raw)
+			if !ok {
+				return nil, nil, proxyInput("All actual publications must be fixed TCP bindings")
 			}
-			if !ok || !matched || observed[binding] {
-				return nil, nil, proxyInput("All actual TCP publications must match explicit frozen bindings; UDP and implicit bindings require reconciliation")
+			ip, _ := netip.ParseAddr(host) // privatePublication returns a canonical IP literal.
+			binding := net.JoinHostPort(host, strconv.Itoa(published))
+			addresses := expected[portPair{target, published}]
+			matchedIP := ip
+			if _, implicit := addresses[netip.Addr{}]; implicit && ip.IsUnspecified() {
+				matchedIP = netip.Addr{}
 			}
-			observed[binding] = true
+			unobserved, matched := addresses[matchedIP]
+			if !matched || seen[binding] {
+				return nil, nil, proxyInput("Actual TCP publications must match the frozen explicit or wildcard bindings")
+			}
+			if !m.Config.Proxy.AllowsListener(ip, published) {
+				return nil, nil, proxyInput("Every original binding must be inside the administrator-approved listener policy")
+			}
+			if unobserved {
+				expectedCount--
+				addresses[matchedIP] = false
+			}
+			seen[binding] = true
+			groups[target] = append(groups[target], binding)
 		}
 	}
-	if found != 1 || len(observed) != len(seen) {
+	if found != 1 || expectedCount != 0 {
 		return nil, nil, proxyInput("Application publications differ from the reviewed component")
 	}
 	for target := range groups {
@@ -318,7 +371,7 @@ func (m *Manager) cutoverServiceTargets(s domain.Service, model map[string]any, 
 
 func (m *Manager) ProxyCutoverTargets(ctx context.Context) (transport.ProxyCutoverTargets, error) {
 	lo, hi := m.Config.Proxy.BackendPorts()
-	result := transport.ProxyCutoverTargets{Targets: []transport.ProxyCutoverTarget{}, Unavailable: []transport.ProxyUnavailableTarget{}, AllowedListenIPs: append([]string{}, m.Config.Proxy.AllowedListenIPs...), ListenPortMin: m.Config.Proxy.ListenPortMin, ListenPortMax: m.Config.Proxy.ListenPortMax, BackendPortMin: lo, BackendPortMax: hi, MaxComponents: transport.MaxProxyCutoverComponents, MaxTargets: transport.MaxProxyCutoverTargets, MaxListeners: transport.MaxProxyCutoverListeners}
+	result := transport.ProxyCutoverTargets{Targets: []transport.ProxyCutoverTarget{}, Unavailable: []transport.ProxyUnavailableTarget{}, AllowedListenIPs: append([]string{}, m.Config.Proxy.AllowedListenIPs...), AllowedListenEndpoints: m.Config.Proxy.AllowedListenEndpoints, ListenPortMin: m.Config.Proxy.ListenPortMin, ListenPortMax: m.Config.Proxy.ListenPortMax, BackendPortMin: lo, BackendPortMax: hi, MaxComponents: transport.MaxProxyCutoverComponents, MaxTargets: transport.MaxProxyCutoverTargets, MaxListeners: transport.MaxProxyCutoverListeners}
 	if err := m.requireProxy(); err != nil {
 		return result, err
 	}
@@ -335,15 +388,21 @@ func (m *Manager) ProxyCutoverTargets(ctx context.Context) (transport.ProxyCutov
 			_, e = m.cutoverDriver().Verify(ctx, s, actual, actual, "", model)
 		}
 		var targets []transport.ProxyCutoverTarget
+		reason := "The complete application publication set must be verified, supported and without an active transfer"
 		if e == nil {
 			targets, _, e = m.cutoverServiceTargets(s, model, actual)
+			var invalid *transport.ProxyInputError
+			if errors.As(e, &invalid) {
+				reason = invalid.Message
+			}
 		}
 		overlay, overlayErr := m.runtimePortOverlay(ctx, s.ID)
 		if e == nil {
 			e = overlayErr
 		}
 		if overlay.Active {
-			e = proxyInput("This service already has an active port transfer")
+			reason = "This service already has an active port transfer"
+			e = proxyInput(reason)
 		}
 		if e == nil {
 			result.Targets = append(result.Targets, targets...)
@@ -351,7 +410,7 @@ func (m *Manager) ProxyCutoverTargets(ctx context.Context) (transport.ProxyCutov
 		}
 		for _, ref := range s.Containers {
 			if ref.Role == domain.RoleApplication {
-				result.Unavailable = append(result.Unavailable, transport.ProxyUnavailableTarget{ServiceID: s.ID, Component: ref.Component, Reason: "The complete application publication set must be verified, supported and without an active transfer"})
+				result.Unavailable = append(result.Unavailable, transport.ProxyUnavailableTarget{ServiceID: s.ID, Component: ref.Component, Reason: reason})
 			}
 		}
 	}
@@ -632,31 +691,12 @@ func (m *Manager) cutoverPrivatePortAvailable(ctx context.Context, port int) err
 	return m.cutoverPrivatePortsAvailable(ctx, []int{port})
 }
 func (m *Manager) cutoverPrivatePortsAvailable(ctx context.Context, ports []int) error {
-	wanted := map[int]bool{}
-	for _, p := range ports {
-		wanted[p] = true
-	}
-	containers, err := m.cutoverDriver().Inventory(ctx, "")
+	reserved, err := m.cutoverDriver().LoopbackTCPPortReserved(ctx, ports)
 	if err != nil {
-		return errors.New("global Docker port reservation inventory is unavailable")
+		return proxyInput("Docker port reservations could not be checked; retry the transfer preview")
 	}
-	for _, c := range containers {
-		if c.State != "running" && c.State != "paused" && c.State != "restarting" {
-			continue
-		}
-		for _, raw := range c.Ports {
-			host, published, _, _, ok := privatePublication(raw)
-			if !ok && strings.HasPrefix(raw, ":") && !strings.HasPrefix(raw, "::") {
-				host, published, _, _, ok = privatePublication("0.0.0.0" + raw)
-			}
-			if !ok || !wanted[published] {
-				continue
-			}
-			ip, e := netip.ParseAddr(host)
-			if e == nil && (ip.Unmap().IsUnspecified() || ip.Unmap().IsLoopback()) {
-				return proxyInput("Private backend port is already reserved by a Docker publication; choose another approved port")
-			}
-		}
+	if reserved {
+		return proxyInput("Private backend port is already reserved by a Docker publication; choose another approved port")
 	}
 	return nil
 }

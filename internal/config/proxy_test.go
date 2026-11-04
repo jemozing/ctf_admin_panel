@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"net/netip"
 	"testing"
 )
 
@@ -96,5 +97,38 @@ func TestProxyBootstrapRejectsUnsafeListenerAndPathAuthority(t *testing.T) {
 				t.Fatal("unsafe proxy installation boundary accepted")
 			}
 		})
+	}
+}
+
+func TestExactProxyListenersDoNotWidenAddressOrPortRange(t *testing.T) {
+	c := proxyBootstrapFixture()
+	c.Proxy.AllowedListenEndpoints = []string{"0.0.0.0:8070", "[::]:8070", "127.0.0.1:5000"}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		endpoint string
+		allowed  bool
+	}{
+		{"127.0.0.1:18080", true}, {"[::1]:18080", true}, {"0.0.0.0:18080", false},
+		{"0.0.0.0:8070", true}, {"[::]:8070", true}, {"127.0.0.1:5000", true},
+		{"127.0.0.1:8070", false}, {"0.0.0.0:5000", false}, {"[::]:8071", false},
+		{"[::1%eth0]:18080", false},
+	} {
+		endpoint := netip.MustParseAddrPort(tc.endpoint)
+		if got := c.Proxy.AllowsListener(endpoint.Addr(), int(endpoint.Port())); got != tc.allowed {
+			t.Errorf("AllowsListener(%s) = %t, want %t", endpoint, got, tc.allowed)
+		}
+	}
+
+	for _, endpoints := range [][]string{
+		{"0.0.0.0:8070", "0.0.0.0:8070"}, {"localhost:8070"}, {"0.0.0.0:08070"}, {"0.0.0.0:80"},
+		{"0.0.0.0:65536"}, {"[0:0:0:0:0:0:0:0]:8070"}, {"[::ffff:127.0.0.1]:8070"},
+		{"[fe80::1%eth0]:8070"}, {"[ff00::1]:8070"}, make([]string, 33),
+	} {
+		c.Proxy.AllowedListenEndpoints = endpoints
+		if err := c.Validate(); err == nil {
+			t.Errorf("accepted invalid exact listen endpoints %q", endpoints)
+		}
 	}
 }
