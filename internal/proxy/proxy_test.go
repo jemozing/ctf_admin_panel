@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -405,6 +406,61 @@ func TestRecorderBlockCannotHoldForwardingAndControlRequiresToken(t *testing.T) 
 	h.ServeHTTP(out, q)
 	if out.Code != 200 {
 		t.Fatal("authenticated status rejected")
+	}
+}
+
+func TestControlStatusReportsAppliedNonLoopbackListeners(t *testing.T) {
+	e, err := NewEngine(Options{StateDirectory: filepath.Join(t.TempDir(), "state"), Listen: func(_, address string) (net.Listener, error) {
+		if address == "0.0.0.0:8071" {
+			return nil, fmt.Errorf("test port is occupied")
+		}
+		return net.Listen("tcp4", "127.0.0.1:0")
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = e.Close(context.Background()) })
+	const token = "test-status-control-token-0000000000000"
+	handler, err := e.ControlHandler(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readStatus := func() controlStatus {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+		request.Header.Set("Authorization", "Bearer "+token)
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		var status controlStatus
+		if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &status) != nil {
+			t.Fatalf("unexpected status response: %d %s", response.Code, response.Body.String())
+		}
+		return status
+	}
+	if got := readStatus(); got.PublicPortsByService == nil || len(got.PublicPortsByService) != 0 {
+		t.Fatalf("new proxy should report known empty active listeners, got %+v", got)
+	}
+	public := DefaultRoute()
+	public.ID, public.ServiceID, public.Component = "public", "bimba", "app"
+	public.Listen, public.Upstream = "0.0.0.0:8070", "http://127.0.0.1:29080"
+	private := public
+	private.ID, private.Listen = "private", "127.0.0.2:29081"
+	if err := e.Apply(Policy{SchemaVersion: 1, Revision: 1, Routes: []Route{public, private}}); err != nil {
+		t.Fatal(err)
+	}
+	public.Listen = "0.0.0.0:8071"
+	if err := e.Apply(Policy{SchemaVersion: 1, Revision: 2, Routes: []Route{public}}); err == nil {
+		t.Fatal("proxy accepted an occupied port")
+	}
+	got := readStatus()
+	if got.DesiredRevision != 2 || got.AppliedRevision != 1 || !slices.Equal(got.PublicPortsByService["bimba"], []int{8070}) {
+		t.Fatalf("status did not preserve the previous applied public listener: %+v", got)
+	}
+	if err := e.Apply(Policy{SchemaVersion: 1, Revision: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readStatus(); got.AppliedRevision != 3 || got.PublicPortsByService == nil || len(got.PublicPortsByService) != 0 {
+		t.Fatalf("removed proxy listener is still reported: %+v", got)
 	}
 }
 

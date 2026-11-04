@@ -8,8 +8,6 @@ import (
 	"net/netip"
 	"path/filepath"
 	"sort"
-	"strconv"
-	"strings"
 
 	"github.com/ctf-service-manager/ctf-service-manager/internal/domain"
 	"github.com/ctf-service-manager/ctf-service-manager/internal/filesystem"
@@ -276,35 +274,9 @@ func captureObservedPort(t transport.CaptureTarget) int {
 	}
 	return t.TargetPort
 }
-func capturePublication(raw string) (host netip.Addr, published, target int, protocol string, ok bool) {
-	left, right, found := strings.Cut(raw, "->")
-	if !found {
-		return
-	}
-	targetRaw, protocol, found := strings.Cut(right, "/")
-	if !found || (protocol != "tcp" && protocol != "udp") {
-		return
-	}
-	i := strings.LastIndex(left, ":")
-	if i < 0 {
-		return
-	}
-	var err error
-	host, err = netip.ParseAddr(strings.Trim(left[:i], "[]"))
-	if err != nil || host.Zone() != "" || host.IsMulticast() {
-		return
-	}
-	published, err = strconv.Atoi(left[i+1:])
-	if err != nil || published < 1 || published > 65535 {
-		return
-	}
-	target, err = strconv.Atoi(targetRaw)
-	if err != nil || target < 1 || target > 65535 {
-		return
-	}
-	host = host.Unmap()
-	ok = true
-	return
+func capturePublication(raw string) (netip.Addr, int, int, string, bool) {
+	host, published, target, protocol, ok := dockerPublication(raw)
+	return host, published, target, protocol, ok && (protocol == "tcp" || protocol == "udp")
 }
 func capturePublicationAddresses(host netip.Addr, point packetcapture.Interface) []string {
 	out := []string{}

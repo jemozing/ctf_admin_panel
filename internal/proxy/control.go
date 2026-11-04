@@ -227,7 +227,7 @@ func (e *Engine) ControlHandler(token string) (http.Handler, error) {
 				fail(400, "invalid_request", "Unknown status options")
 				return
 			}
-			emit(200, e.Status())
+			emit(200, e.statusSnapshot(true))
 		case r.URL.Path == "/v1/h2-preflight" && r.Method == http.MethodPost:
 			var input HTTP2ProbeRequest
 			if !decode(&input) {

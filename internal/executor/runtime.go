@@ -194,6 +194,7 @@ func (m *Manager) ServiceDetails(ctx context.Context, id domain.ID) (transport.S
 		}
 	}
 	m.detailObservations(ctx, s, st, &result)
+	result.ExternalPorts = m.serviceExternalPorts(ctx, s.ID, result.Containers)
 	return result, nil
 }
 func (m *Manager) Logs(ctx context.Context, id domain.ID, component string, tail int) (transport.LogResult, error) {
