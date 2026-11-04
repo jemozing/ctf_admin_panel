@@ -4,21 +4,51 @@ import {ArrowLeft,Check,Edit3,Network,Plus,RefreshCw,Shield,Trash2} from 'lucide
 import {api,post,time} from './api'
 import type {Service,User} from './api'
 import {Badge,Button,Empty,Modal,Notice} from './ui'
-import {proxyProtocolLabel,proxyCutoverComponents,proxyCutoverGroupEvidence,proxyCutoverGroupRequest,proxyCutoverGroupTargets,proxyCutoverRoutes,proxyCutoverUpdateSettings,proxyListenAddress,proxyLoopbackIP,proxyLoopbackListener,proxyRouteChanges,proxyRouteID,proxyRouteInput,proxyStatusView,wafLabel,wafReasonLabel} from './proxyTypes'
-import type {CapturePolicy,PolicyView,ProxyApply,ProxyBan,ProxyBans,ProxyCutoverContainer,ProxyCutoverGroupDraft,ProxyCutoverPreview,ProxyCutoverTarget,ProxyCutoverTargets,ProxyCutoverView,ProxyPreview,ProxyRoute,ProxyRouteInput,ProxyStatus,ProxyStatusEnvelope,ProxyTarget,ProxyTargets,ProxyTLSCertificate,ProxyTLSCertificates,RouteLimits,WafPolicy} from './proxyTypes'
+import {proxyProtocolLabel,proxyCutoverComponents,proxyCutoverGroupEvidence,proxyCutoverGroupRequest,proxyCutoverGroupTargets,proxyCutoverRoutes,proxyCutoverUpdateSettings,proxyListenAddress,proxyLoopbackIP,proxyLoopbackListener,proxyRouteChanges,proxyRouteDraft,proxyRouteID,proxyRouteInput,proxyServiceRatePolicy,proxyStatusView,wafBlocks,wafLabel,wafReasonLabel} from './proxyTypes'
+import type {CapturePolicy,PolicyView,ProxyApply,ProxyBan,ProxyBans,ProxyCutoverContainer,ProxyCutoverGroupDraft,ProxyCutoverPreview,ProxyCutoverTarget,ProxyCutoverTargets,ProxyCutoverView,ProxyPreview,ProxyRoute,ProxyRouteInput,ProxyStatus,ProxyStatusEnvelope,ProxyTarget,ProxyTargets,ProxyTLSCertificate,ProxyTLSCertificates,RouteLimits,WafMode,WafPolicy} from './proxyTypes'
 
 const errorText=(error:unknown)=>error instanceof Error?error.message:'Не удалось выполнить запрос'
 const lines=(value:string)=>value.split(/[\n,]/).map(part=>part.trim()).filter(Boolean)
 const defaultsCapture:CapturePolicy={mode:'metadata',max_body_bytes:65536,redact_headers:[],redact_query_fields:[],redact_body_fields:[],body_patterns:[]}
 const defaultsWaf:WafPolicy={mode:'observe_only',rate_per_second:20,burst:40,violation_threshold:10,violation_window_seconds:60,ban_ttl_seconds:60,max_ip_states:4096,state_ttl_seconds:300,overflow_mode:'reject_new',exceptions:[]}
 const defaultsLimits:RouteLimits={max_concurrent:128,max_header_bytes:65536,read_header_timeout_seconds:5,upstream_response_header_timeout_seconds:30,idle_timeout_seconds:60,max_connection_seconds:300,max_body_bytes:0}
+const simpleRateMax=100000
+const simpleRatePause=5
+const validSimpleRate=(rate:number)=>Number.isInteger(rate)&&rate>=1&&rate<=simpleRateMax
+const simpleRateWaf=(rate:number):WafPolicy=>({
+  mode:'rate_limit',rate_per_second:rate,burst:0,violation_threshold:0,violation_window_seconds:0,ban_ttl_seconds:0,
+  max_ip_states:defaultsWaf.max_ip_states,state_ttl_seconds:0,overflow_mode:defaultsWaf.overflow_mode,exceptions:[],
+})
 const targetKey=(target:Pick<ProxyTarget,'service_id'|'component'|'upstream_port'>)=>`${target.service_id}|${target.component}|${target.upstream_port}`
 const listenerIP=(listener:string)=>listener.slice(0,listener.lastIndexOf(':')).replace(/^\[|\]$/g,'')
 const listenerPort=(listener:string)=>listener.split(':').at(-1)||''
 const cutoverRoute=(route:ProxyRouteInput)=>route.id.startsWith('route-cutover-')
 
-function newRoute(target:ProxyTarget,listen:string):ProxyRouteInput{
-  return {id:proxyRouteID(),service_id:target.service_id,component:target.component,upstream_port:target.upstream_port,listen,host:'',protocol:'http1',capture:{...defaultsCapture},waf:{...defaultsWaf},trusted_proxy_cidrs:[],limits:{...defaultsLimits}}
+function newRoute(target:ProxyTarget,listen:string,waf:WafPolicy=defaultsWaf):ProxyRouteInput{
+  return {id:proxyRouteID(),service_id:target.service_id,component:target.component,upstream_port:target.upstream_port,listen,host:'',protocol:'http1',capture:{...defaultsCapture},waf:{...waf},trusted_proxy_cidrs:[],limits:{...defaultsLimits}}
+}
+
+function ServiceRateLimit({current,blocked,unavailable,onStage}:{
+  current?:WafPolicy;blocked:boolean;unavailable:string;onStage:(policy:WafPolicy)=>void
+}){
+  const [rate,setRate]=useState(String(current?.rate_per_second??defaultsWaf.rate_per_second))
+  const disabled=blocked||!!unavailable
+  const submit=(event:FormEvent)=>{
+    event.preventDefault()
+    const value=Number(rate)
+    if(!disabled&&validSimpleRate(value)&&value!==current?.rate_per_second)onStage(simpleRateWaf(value))
+  }
+  return <section className="panel">
+    <div className="panel-heading"><div><h2>Лимит запросов по IP</h2><p>Один лимит на IP для всех HTTP-маршрутов сервиса. При превышении прокси отвечает HTTP 429 в течение {simpleRatePause} секунд.</p></div></div>
+    <form className="dialog-body proxy-route-form" onSubmit={submit}>
+      {unavailable&&<Notice>{unavailable}</Notice>}
+      <label>Запросов в секунду<input type="number" required min={1} max={simpleRateMax} step={1} value={rate} disabled={disabled} onChange={event=>setRate(event.target.value)}/><small>При включении этот лимит заменит правила WAF маршрутов сервиса. Изменения проходят проверку checker и подтверждение плана.</small></label>
+      <div className="dialog-footer">
+        {current&&<Button variant="outline" type="button" disabled={disabled} onClick={()=>onStage({...defaultsWaf,rate_per_second:current.rate_per_second})}>Вернуть наблюдение</Button>}
+        <Button type="submit" disabled={disabled||!validSimpleRate(Number(rate))||Number(rate)===current?.rate_per_second}>{current?'Изменить лимит в черновике':'Включить лимит в черновике'}</Button>
+      </div>
+    </form>
+  </section>
 }
 
 function QuickRoute({targets,options,routes,serviceID,busy,blocked,checkerConfirmed,onCheckerConfirmed,onReview}:{
@@ -28,20 +58,21 @@ function QuickRoute({targets,options,routes,serviceID,busy,blocked,checkerConfir
   const editable=routes.filter(route=>route.service_id===serviceID&&route.protocol==='http1'&&!route.host&&!cutoverRoute(route)&&targets.some(target=>targetKey(target)===targetKey(route)))
   const [routeID,setRouteID]=useState(editable[0]?.id||'')
   const existing=editable.find(route=>route.id===routeID)
-  const candidates=existing?targets.filter(target=>target.component===existing.component&&(existing.waf.mode==='observe_only'||target.private_binding)):targets
-  const needsChecker=routes.some(route=>route.waf.mode==='enforce')
+  const serviceRate=proxyServiceRatePolicy(routes,serviceID)
+  const candidates=targets.filter(target=>existing?target.component===existing.component&&(existing.waf.mode==='observe_only'||target.private_binding):!serviceRate||target.private_binding)
+  const needsChecker=routes.some(route=>wafBlocks(route.waf.mode))
   return <section className="panel">
-    <div className="panel-heading"><div><h2>Дополнительный HTTP-маршрут</h2><p>Отдельный порт для проверки или дополнительного входа. В журнал попадают запросы на этот порт прокси. Новый маршрут пишет метаданные, а WAF работает в режиме наблюдения.</p></div></div>
-    {!targets.length?<Empty>У сервиса пока нет подтверждённого Docker-порта для дополнительного маршрута.</Empty>:
+    <div className="panel-heading"><div><h2>Дополнительный HTTP-маршрут</h2><p>Отдельный порт для проверки или дополнительного входа. В журнал попадают запросы на этот порт прокси. {serviceRate?'Новый маршрут унаследует лимит запросов сервиса.':'Новый маршрут пишет метаданные, а WAF работает в режиме наблюдения.'}</p></div></div>
+    {!candidates.length?<Empty>У сервиса пока нет подтверждённого Docker-порта для дополнительного маршрута.</Empty>:
       <div className="dialog-body proxy-route-form">
         {!!editable.length&&<label>Маршрут<select value={existing?.id||''} disabled={blocked||busy} onChange={event=>setRouteID(event.target.value)}>{editable.map(route=><option key={route.id} value={route.id}>{route.listen} · {route.component}</option>)}<option value="">Добавить маршрут</option></select></label>}
-        <QuickRoutePorts key={existing?.id||'new'} existing={existing} targets={candidates} options={options} routes={routes} busy={busy} blocked={blocked} needsChecker={needsChecker} checkerConfirmed={checkerConfirmed} onCheckerConfirmed={onCheckerConfirmed} onReview={onReview}/>
+        <QuickRoutePorts key={existing?.id||'new'} existing={existing} serviceRate={serviceRate} targets={candidates} options={options} routes={routes} busy={busy} blocked={blocked} needsChecker={needsChecker} checkerConfirmed={checkerConfirmed} onCheckerConfirmed={onCheckerConfirmed} onReview={onReview}/>
       </div>}
   </section>
 }
 
-function QuickRoutePorts({existing,targets,options,routes,busy,blocked,needsChecker,checkerConfirmed,onCheckerConfirmed,onReview}:{
-  existing?:ProxyRouteInput;targets:ProxyTarget[];options:ProxyTargets;routes:ProxyRouteInput[];busy:boolean;blocked:boolean;needsChecker:boolean
+function QuickRoutePorts({existing,serviceRate,targets,options,routes,busy,blocked,needsChecker,checkerConfirmed,onCheckerConfirmed,onReview}:{
+  existing?:ProxyRouteInput;serviceRate?:WafPolicy;targets:ProxyTarget[];options:ProxyTargets;routes:ProxyRouteInput[];busy:boolean;blocked:boolean;needsChecker:boolean
   checkerConfirmed:boolean;onCheckerConfirmed:(confirmed:boolean)=>void;onReview:(routes:ProxyRouteInput[])=>void
 }){
   const first=targets.find(target=>existing&&targetKey(target)===targetKey(existing))||targets[0]
@@ -69,7 +100,7 @@ function QuickRoutePorts({existing,targets,options,routes,busy,blocked,needsChec
   const submit=(event:FormEvent)=>{
     event.preventDefault()
     if(disabled||!selected)return
-    const next=existing?{...existing,listen,upstream_port:selected.upstream_port}:newRoute(selected,listen)
+    const next=existing?{...existing,listen,upstream_port:selected.upstream_port}:newRoute(selected,listen,serviceRate)
     onReview(existing?routes.map(route=>route.id===existing.id?next:route):[...routes,next])
   }
   return <form onSubmit={submit}>
@@ -81,7 +112,7 @@ function QuickRoutePorts({existing,targets,options,routes,busy,blocked,needsChec
     {selected?.private_binding===false&&<Notice>Прямую публикацию здесь можно проверить через локальный маршрут. Чтобы записывать запросы на привычный игровой адрес, перенесите игровой порт на прокси.</Notice>}
     {ip&&portValue&&!portValid&&<Notice variant="warning">Этот порт не разрешён для выбранного IP прокси.</Notice>}
     {!allowedIPs.length&&<Notice variant="warning">Для выбранного backend в этой установке нет разрешённого IP прокси.</Notice>}
-    {needsChecker&&<label className="inline-check"><input type="checkbox" disabled={busy||blocked} checked={checkerConfirmed} onChange={event=>onCheckerConfirmed(event.target.checked)}/><span>Проверены checker и действующие маршруты с блокировкой WAF.</span></label>}
+    {needsChecker&&<label className="inline-check"><input type="checkbox" disabled={busy||blocked} checked={checkerConfirmed} onChange={event=>onCheckerConfirmed(event.target.checked)}/><span>Проверена совместимость checker с ограничениями WAF.</span></label>}
     <div className="dialog-footer"><Button type="submit" busy={busy} disabled={disabled}>Проверить маршрут</Button></div>
   </form>
 }
@@ -132,6 +163,14 @@ export default function ProxyWaf({services,user,serviceID,onBack,onTraffic}:{ser
   const listedRoutes=serviceID?routes.filter(route=>route.service_id===serviceID):routes
   const listedTargets=(targets?.targets||[]).filter(target=>!serviceID||target.service_id===serviceID)
   const unavailable=(targets?.unavailable||[]).filter(target=>!serviceID||target.service_id===serviceID)
+  const manualBanRoutes=(view?.policy.routes||[]).filter(route=>route.waf.mode!=='rate_limit')
+  const serviceRateFor=(id:string)=>proxyServiceRatePolicy(routes,id)
+  const serviceRate=serviceID?serviceRateFor(serviceID):undefined
+  const serviceRateAllowed=(id:string)=>routes.filter(route=>route.service_id===id).every(route=>
+    (view?.policy.routes||[]).some(current=>current.id===route.id)&&listedTargets.some(target=>target.private_binding&&targetKey(target)===targetKey(route)))
+  const additiveTargets=listedTargets.filter(target=>target.private_binding||!serviceRateFor(target.service_id))
+  const needsChecker=routes.some(route=>wafBlocks(route.waf.mode))
+  const rateUnavailable=!listedRoutes.length?'Сначала перенесите игровые порты или примените HTTP-маршрут с закрытым backend.':serviceID&&!serviceRateAllowed(serviceID)?'Для этого режима у всех маршрутов сервиса должны быть подтверждённые закрытые backend. Локальные маршруты наблюдения можно убрать перед настройкой лимита.':''
   const observationRoutes=new Set(serviceID?listedRoutes.filter(route=>!cutoverRoute(route)&&route.waf.mode==='observe_only'&&proxyLoopbackListener(route.listen)&&listedTargets.some(target=>target.private_binding===false&&targetKey(target)===targetKey(route))).map(route=>route.id):[])
   const appliedRevision=status?.applied_revision
   const pendingPolicy=!!status&&(status.desired_revision!==status.applied_revision||(view?.desired_revision??0)>status.applied_revision)
@@ -143,6 +182,10 @@ export default function ProxyWaf({services,user,serviceID,onBack,onTraffic}:{ser
   },[appliedRevision,blocked,refresh,view])
   const review=async(nextRoutes=routes)=>{
     if(!view||externalBlocked)return
+    if(!checkerConfirmed&&nextRoutes.some(route=>wafBlocks(route.waf.mode))){
+      setError('Подтвердите проверку совместимости игрового checker с ограничениями WAF.')
+      return
+    }
     setBusy(true);setError('');setMessage('')
     try{setPreview(await post<ProxyPreview>('/api/proxy/preview',{expected_revision:view.desired_revision,routes:nextRoutes,confirm_checker:checkerConfirmed}))}catch(error){setError(errorText(error))}finally{setBusy(false)}
   }
@@ -152,10 +195,22 @@ export default function ProxyWaf({services,user,serviceID,onBack,onTraffic}:{ser
     try{const result=await post<ProxyApply>('/api/proxy/confirm',{proposal_id:preview.proposal_id,digest:preview.digest});setPreview(null);setCheckerConfirmed(false);setApplied(result.desired_revision);setMessage(result.activation==='applied'?`Применена ревизия ${result.applied_revision}.`:`Ревизия ${result.desired_revision} подтверждена. Ожидаем применения proxy.`);await refresh()}catch(error){setError(errorText(error))}finally{setBusy(false)}
   }
   const create=()=>{
-    const first=listedTargets[0]
+    const first=additiveTargets[0]
     if(!first||externalBlocked)return
     const listen=first.private_binding===false?observationListen:targets?.listeners?.[0]||proxyListenAddress(targets?.allowed_listen_ips?.[0]||'127.0.0.1',targets?.listen_port_min||18081)
-    setEditing(newRoute(first,listen))
+    setEditing(newRoute(first,listen,serviceRateFor(first.service_id)))
+  }
+  const saveRoute=(value:ProxyRouteInput)=>{
+    setRoutes(current=>proxyRouteDraft(current,value))
+    setEditing(null)
+    setPreview(null)
+    setCheckerConfirmed(false)
+  }
+  const stageServiceRate=(policy:WafPolicy)=>{
+    if(!serviceID||blocked||pendingPolicy||rateUnavailable)return
+    setRoutes(current=>current.map(route=>route.service_id===serviceID?{...route,waf:policy}:route))
+    setCheckerConfirmed(false)
+    setMessage('Правила WAF сервиса добавлены в черновик. Проверьте совместимость с checker и откройте «Посмотреть план».')
   }
   const stageObservationRemoval=()=>{
     if(blocked||pendingPolicy)return
@@ -166,38 +221,43 @@ export default function ProxyWaf({services,user,serviceID,onBack,onTraffic}:{ser
   return <div className="proxy-view"><div className="page-title"><div><h1>{serviceID?`Прокси и трафик · ${serviceName(serviceID)}`:'Proxy / WAF'}</h1><p>HTTP-маршруты, ограничения запросов и временные блокировки IP.</p></div><div className="proxy-row-actions">{onBack&&<Button variant="ghost" disabled={busy||dirty||!!preview} onClick={onBack}><ArrowLeft size={15}/>К сервису</Button>}{onTraffic&&<Button variant="outline" disabled={busy||dirty||!!preview} onClick={onTraffic}>Трафик сервиса</Button>}<Button variant="outline" busy={busy} onClick={()=>void refresh()}><RefreshCw size={15}/>Обновить</Button></div></div>
     {error&&<Notice variant="error">{error}</Notice>}{connectionError&&<Notice variant="warning">{connectionError} Действующее состояние proxy сейчас не подтверждено.</Notice>}{message&&<Notice>{message}</Notice>}
     {status&&!configured&&<Notice>Модуль proxy не подключён к этой установке. После его подключения здесь появятся маршруты и состояние защиты.</Notice>}
-    <div className="proxy-summary"><section className="panel"><span><Network size={16}/>Маршрутизация</span><strong>{connectionError?'Нет свежих данных':!status?'Ожидаем состояние':!configured?'Не подключена':status.available?'Proxy доступен':'Proxy недоступен'}</strong><small>Нужная ревизия: {status?.desired_revision??view?.desired_revision??'—'} · применена: {status?.applied_revision??'—'}</small></section><section className="panel"><span><Shield size={16}/>{serviceID?'WAF · все сервисы':'WAF'}</span><strong>{!status||connectionError?'Ожидаем состояние':status.waf_degraded?'Ограниченный режим':!admin?(status?.available?'Действует политика':'Нет актуальных данных'):routes.some(route=>route.waf.mode==='enforce')?'Есть правила блокировки':'Наблюдение / отключён'}</strong><small>{status?.routes??(admin?routes.length:'—')} маршрутов · {banTotal} активных банов</small></section></div>
+    <div className="proxy-summary"><section className="panel"><span><Network size={16}/>Маршрутизация</span><strong>{connectionError?'Нет свежих данных':!status?'Ожидаем состояние':!configured?'Не подключена':status.available?'Proxy доступен':'Proxy недоступен'}</strong><small>Нужная ревизия: {status?.desired_revision??view?.desired_revision??'—'} · применена: {status?.applied_revision??'—'}</small></section><section className="panel"><span><Shield size={16}/>{serviceID?'WAF · все сервисы':'WAF'}</span><strong>{!status||connectionError?'Ожидаем состояние':status.waf_degraded?'Ограниченный режим':!admin?(status?.available?'Действует политика':'Нет актуальных данных'):needsChecker?'Есть правила блокировки':'Наблюдение / отключён'}</strong><small>{status?.routes??(admin?routes.length:'—')} маршрутов · {banTotal} активных банов</small></section></div>
     {(status?.error||status?.last_error||view?.error)&&<Notice variant="warning">{status?.error||status?.last_error||view?.error}</Notice>}
     {view?.external_revision&&<Notice variant="warning"><p>В файле задана аварийная ревизия {view.desired_revision}. Она может ещё ожидать применения. Согласование позволит продолжить работу с этой политикой в панели; после просмотра и подтверждения будет опубликована следующая ревизия.</p>{externalAcknowledged?<p>Ревизия {view.desired_revision} согласована для подготовки плана. Можно сохранить её параметры без изменений или изменить черновик.</p>:<Button variant="outline" disabled={busy} onClick={()=>{setAcknowledgedExternalRevision(view.desired_revision);setPreview(null);setCheckerConfirmed(false)}}>Согласовать аварийную политику</Button>}</Notice>}
     {pendingPolicy&&configured&&<Notice variant="warning">Подтверждённая ревизия ещё не совпадает с действующей. Proxy продолжает работу по последней успешно применённой политике.</Notice>}
     {serviceID&&portCutovers}
+    {admin&&serviceID&&configured&&view&&targets&&<ServiceRateLimit key={`${view.desired_revision}:${serviceRate?.rate_per_second??''}`} current={serviceRate} blocked={blocked||pendingPolicy} unavailable={rateUnavailable} onStage={stageServiceRate}/>}
     {admin&&serviceID&&configured&&view&&targets&&<QuickRoute key={view.desired_revision} targets={listedTargets} options={targets} routes={routes} serviceID={serviceID} busy={busy} blocked={dirty||externalBlocked||!!editing||!!preview} checkerConfirmed={checkerConfirmed} onCheckerConfirmed={setCheckerConfirmed} onReview={next=>void review(next)}/>}
     <Notice>HTTP-прокси записывает запросы, прошедшие через его маршруты. Для HTTPS и HTTP/2 или gRPC выберите совместимый профиль. Остальной TCP/UDP-трафик можно исследовать в разделах пакетов и потоков.</Notice>
     {admin&&certificateError&&<Notice variant="warning">Список сертификатов недоступен: {certificateError} HTTP-маршруты можно настраивать без TLS.</Notice>}{admin&&certificatesTruncated&&<Notice variant="warning">Найдено не менее {certificateTotal} TLS-профилей; показан ограниченный список. Для выбора профиля обновите локальную конфигурацию сертификатов.</Notice>}
-    {admin&&<section className="panel"><div className="panel-heading"><div><h2>Маршруты</h2><p>Новый маршрут начинает с наблюдения WAF. Изменения применяются после просмотра и подтверждения.</p></div>{admin&&<Button variant="outline" disabled={busy||!configured||externalBlocked||!listedTargets.length} onClick={create}><Plus size={15}/>Добавить маршрут</Button>}</div>
-      <div className="table-wrap"><table><thead><tr><th>Сервис / компонент</th><th>Внешний адрес → backend</th><th>WAF</th><th>Capture</th>{admin&&<th/>}</tr></thead><tbody>{listedRoutes.map(route=><tr key={route.id}><td>{serviceName(route.service_id)}<small>{route.component} · <code>{route.id}</code></small></td><td><code>{route.listen}</code><small>{proxyProtocolLabel(route.protocol)+(route.protocol!=='http1'?` · ${route.tls?.certificate_id||'сертификат не указан'}`:'')}</small><small>→ {targets?.targets?.find(target=>targetKey(target)===targetKey(route))?.upstream_address||view?.policy.routes?.find(value=>value.id===route.id)?.upstream||`порт ${route.upstream_port}`}</small>{route.host&&<small>Host: {route.host}</small>}</td><td><Badge tone={route.waf.mode==='enforce'?'warn':'neutral'}>{wafLabel(route.waf.mode)}</Badge><small>{route.waf.rate_per_second} запр./с · burst {route.waf.burst}</small></td><td>{route.capture.mode==='grpc_body'?'Сырые gRPC bytes':route.capture.mode==='bounded_body'?'Ограниченные тела':'Метаданные'}<small>{route.capture.mode!=='metadata'?`до ${Math.round(route.capture.max_body_bytes/1024)} KiB на тело`:'Тела не записываются'}</small></td>{admin&&<td><div className="proxy-row-actions"><Button variant="ghost" aria-label={`Изменить ${route.id}`} disabled={externalBlocked||busy} onClick={()=>setEditing(structuredClone(route))}><Edit3 size={15}/></Button><Button variant="ghost" aria-label={`Удалить из черновика ${route.id}`} disabled={externalBlocked||busy||cutoverRoute(route)} title={cutoverRoute(route)?'Для этого маршрута используйте возврат игровых портов':undefined} onClick={()=>{setRoutes(value=>value.filter(item=>item.id!==route.id));setPreview(null)}}><Trash2 size={15}/></Button></div></td>}</tr>)}</tbody></table></div>
+    {admin&&<section className="panel"><div className="panel-heading"><div><h2>Маршруты</h2><p>Новый маршрут начинает с наблюдения WAF. Изменения применяются после просмотра и подтверждения.</p></div>{admin&&<Button variant="outline" disabled={busy||!configured||externalBlocked||!additiveTargets.length} onClick={create}><Plus size={15}/>Добавить маршрут</Button>}</div>
+      <div className="table-wrap"><table><thead><tr><th>Сервис / компонент</th><th>Внешний адрес → backend</th><th>WAF</th><th>Capture</th>{admin&&<th/>}</tr></thead><tbody>{listedRoutes.map(route=><tr key={route.id}><td>{serviceName(route.service_id)}<small>{route.component} · <code>{route.id}</code></small></td><td><code>{route.listen}</code><small>{proxyProtocolLabel(route.protocol)+(route.protocol!=='http1'?` · ${route.tls?.certificate_id||'сертификат не указан'}`:'')}</small><small>→ {targets?.targets?.find(target=>targetKey(target)===targetKey(route))?.upstream_address||view?.policy.routes?.find(value=>value.id===route.id)?.upstream||`порт ${route.upstream_port}`}</small>{route.host&&<small>Host: {route.host}</small>}</td><td><Badge tone={wafBlocks(route.waf.mode)?'warn':'neutral'}>{wafLabel(route.waf.mode)}</Badge><small>{route.waf.mode==='rate_limit'?`${route.waf.rate_per_second} запр./с на IP · HTTP 429 на ${simpleRatePause} с`:`${route.waf.rate_per_second} запр./с · burst ${route.waf.burst}`}</small></td><td>{route.capture.mode==='grpc_body'?'Сырые gRPC bytes':route.capture.mode==='bounded_body'?'Ограниченные тела':'Метаданные'}<small>{route.capture.mode!=='metadata'?`до ${Math.round(route.capture.max_body_bytes/1024)} KiB на тело`:'Тела не записываются'}</small></td>{admin&&<td><div className="proxy-row-actions"><Button variant="ghost" aria-label={`Изменить ${route.id}`} disabled={externalBlocked||busy} onClick={()=>setEditing(structuredClone(route))}><Edit3 size={15}/></Button><Button variant="ghost" aria-label={`Удалить из черновика ${route.id}`} disabled={externalBlocked||busy||cutoverRoute(route)} title={cutoverRoute(route)?'Для этого маршрута используйте возврат игровых портов':undefined} onClick={()=>{setRoutes(value=>value.filter(item=>item.id!==route.id));setPreview(null)}}><Trash2 size={15}/></Button></div></td>}</tr>)}</tbody></table></div>
       {!listedRoutes.length&&<Empty icon={<Network size={26}/>}><strong>Маршруты ещё не добавлены</strong><span>Выберите подтверждённый backend зарегистрированного HTTP-сервиса.</span></Empty>}
-      {admin&&<div className="proxy-policy-actions">{dirty&&<Badge tone="warn">Изменения в черновике</Badge>}<label className="inline-check"><input type="checkbox" checked={checkerConfirmed} onChange={event=>setCheckerConfirmed(event.target.checked)}/><span>Проверены совместимость HTTP/checker и правила observe-only перед включением блокировки.</span></label><div><Button busy={busy} disabled={!configured||!view||externalBlocked||(!dirty&&!externalAcknowledged)} onClick={()=>void review()}>Посмотреть план</Button><Button variant="ghost" disabled={!dirty||busy} onClick={()=>{if(view)setRoutes((view.policy.routes||[]).map(route=>proxyRouteInput(route,targets?.targets||[])));setCheckerConfirmed(false);setMessage('')}}>Отменить черновик</Button></div></div>}
+      {admin&&<div className="proxy-policy-actions">{dirty&&<Badge tone="warn">Изменения в черновике</Badge>}<label className="inline-check"><input type="checkbox" checked={checkerConfirmed} onChange={event=>setCheckerConfirmed(event.target.checked)}/><span>Проверена совместимость checker с ограничениями WAF.</span></label><div><Button busy={busy} disabled={!configured||!view||externalBlocked||(!dirty&&!externalAcknowledged)||(needsChecker&&!checkerConfirmed)} onClick={()=>void review()}>Посмотреть план</Button><Button variant="ghost" disabled={!dirty||busy} onClick={()=>{if(view)setRoutes((view.policy.routes||[]).map(route=>proxyRouteInput(route,targets?.targets||[])));setCheckerConfirmed(false);setMessage('')}}>Отменить черновик</Button></div></div>}
     </section>}
     {!serviceID&&portCutovers}
     {!admin&&<Notice>Параметры маршрутов и правила WAF доступны администратору. Ваша роль видит состояние proxy и активные временные баны.</Notice>}
     {!!unavailable.length&&<details className="proxy-unavailable"><summary>Компоненты без подтверждённого HTTP-маршрута ({unavailable.length})</summary><ul>{unavailable.map((target,index)=><li key={`${target.service_id}:${target.component}:${index}`}>{serviceName(target.service_id)} · {target.component}: {target.reason}</li>)}</ul></details>}
     {!serviceID&&bansTruncated&&<Notice variant="warning">Показаны {bans.length} из {banTotal} активных банов. Для конкретного адреса доступно снятие бана по IP.</Notice>}
-    {!serviceID&&<section className="panel proxy-bans"><div className="panel-heading"><div><h2>Временные блокировки</h2><p>Лимит действует в пределах сервиса. Общий IP за NAT затрагивает всех клиентов с этим адресом.</p></div><div className="proxy-row-actions">{canUnban&&<Button variant="outline" disabled={!configured||!services.length} onClick={()=>setUnban({service_id:services[0].id,ip:'',reason:'',source:'',created_at:'',expires_at:''})}>Снять бан по IP</Button>}{admin&&<Button variant="outline" disabled={!configured||!view?.policy.routes?.length} onClick={()=>setManualBan(true)}><Plus size={15}/>Заблокировать IP</Button>}</div></div><div className="table-wrap"><table><thead><tr><th>Сервис / IP</th><th>Причина / источник</th><th>До</th>{canUnban&&<th/>}</tr></thead><tbody>{bans.map(ban=><tr key={`${ban.service_id}|${ban.route_id||''}|${ban.ip}`}><td>{serviceName(ban.service_id)}<small><code>{ban.ip}</code>{ban.route_id&&` · ${ban.route_id}`}</small></td><td>{ban.source==='automatic'?wafReasonLabel(ban.reason):ban.reason}<small>{ban.source==='manual'?'Ручная блокировка':'Автобан'}</small></td><td title={ban.expires_at}>{time(ban.expires_at)}</td>{canUnban&&<td><Button variant="outline" onClick={()=>setUnban(ban)}>Снять бан</Button></td>}</tr>)}</tbody></table></div>{!bans.length&&<Empty>Активных временных банов нет.</Empty>}</section>}
-    {editing&&<RouteEditor value={editing} existing={!!view?.policy.routes?.some(route=>route.id===editing.id)} targets={listedTargets} certificates={certificates} certificateError={certificateError} listenHint={listenHint} observationListen={observationListen} fixedBinding={cutoverRoute(editing)} onClose={()=>setEditing(null)} onSave={value=>{setRoutes(current=>current.some(route=>route.id===value.id)?current.map(route=>route.id===value.id?value:route):[...current,value]);setEditing(null);setPreview(null)}}/>}
+    {!serviceID&&<section className="panel proxy-bans"><div className="panel-heading"><div><h2>Временные блокировки</h2><p>Лимит действует в пределах сервиса. Общий IP за NAT затрагивает всех клиентов с этим адресом.</p></div><div className="proxy-row-actions">{canUnban&&<Button variant="outline" disabled={!configured||!services.length} onClick={()=>setUnban({service_id:services[0].id,ip:'',reason:'',source:'',created_at:'',expires_at:''})}>Снять бан по IP</Button>}{admin&&<Button variant="outline" disabled={!configured||pendingPolicy||!manualBanRoutes.length} onClick={()=>setManualBan(true)}><Plus size={15}/>Заблокировать IP</Button>}</div></div><div className="table-wrap"><table><thead><tr><th>Сервис / IP</th><th>Причина / источник</th><th>До</th>{canUnban&&<th/>}</tr></thead><tbody>{bans.map(ban=><tr key={`${ban.service_id}|${ban.route_id||''}|${ban.ip}`}><td>{serviceName(ban.service_id)}<small><code>{ban.ip}</code>{ban.route_id&&` · ${ban.route_id}`}</small></td><td>{ban.source==='automatic'?wafReasonLabel(ban.reason):ban.reason}<small>{ban.source==='manual'?'Ручная блокировка':'Автобан'}</small></td><td title={ban.expires_at}>{time(ban.expires_at)}</td>{canUnban&&<td><Button variant="outline" onClick={()=>setUnban(ban)}>Снять бан</Button></td>}</tr>)}</tbody></table></div>{!bans.length&&<Empty>Активных временных банов нет.</Empty>}</section>}
+    {editing&&<RouteEditor value={editing} existing={!!view?.policy.routes?.some(route=>route.id===editing.id)} targets={listedTargets} certificates={certificates} certificateError={certificateError} listenHint={listenHint} observationListen={observationListen} fixedBinding={cutoverRoute(editing)} onClose={()=>setEditing(null)} serviceRateFor={serviceRateFor} serviceRateAllowed={serviceRateAllowed} onSave={saveRoute}/>}
     {preview&&<Modal open onClose={()=>setPreview(null)} title="Подтвердить политику proxy" description="Будет активирована только эта проверенная ревизия маршрутов." wide><div className="dialog-body proxy-preview">{preview.policy.routes.some(route=>route.capture.mode==='grpc_body')&&<Notice variant="warning">Этот план явно включает сохранение сырых gRPC bytes после TLS termination. Флаги, пароли и protobuf-поля автоматически не редактируются; доступ к bytes требует sensitive access.</Notice>}{preview.warnings?.length>0&&<Notice variant="warning"><ul>{preview.warnings.map((warning,index)=><li key={index}>{warning}</li>)}</ul></Notice>}<p>Применена ревизия {preview.observed_applied_revision??status?.applied_revision??'—'} → план ревизии {preview.policy.revision} · {(preview.policy.routes||[]).length} маршрутов.</p><PolicyDiff before={preview.previous_policy?.routes||view?.policy.routes||[]} after={preview.policy.routes||[]} serviceName={serviceName}/><p className="muted">Подтверждение относится к digest <code>{preview.digest}</code>{preview.expires_at&&<>. Срок: {time(preview.expires_at)}</>}.</p>{error&&<Notice variant="error">{error}</Notice>}<div className="dialog-footer"><Button variant="outline" disabled={busy} onClick={()=>setPreview(null)}>Назад</Button><Button busy={busy} onClick={()=>void confirm()}><Check size={15}/>Подтвердить</Button></div></div></Modal>}
-    {manualBan&&<BanDialog routes={(view?.policy.routes||[]).map(route=>proxyRouteInput(route,targets?.targets||[]))} serviceName={serviceName} onClose={()=>setManualBan(false)} onSaved={()=>{setManualBan(false);void refresh()}}/>}
+    {manualBan&&<BanDialog routes={manualBanRoutes} serviceName={serviceName} onClose={()=>setManualBan(false)} onSaved={()=>{setManualBan(false);void refresh()}}/>}
     {unban&&<UnbanDialog ban={unban} services={services} serviceName={serviceName(unban.service_id)} onClose={()=>setUnban(null)} onSaved={()=>{setUnban(null);void refresh()}}/>}
   </div>
 }
 
 function policyFields(route:ProxyRoute):[string,string][]{
   const capture=route.capture,waf=route.waf,limits=route.limits
-  return [
-    ['Сервис / компонент',`${route.service_id} · ${route.component}`],['Внешний адрес',route.listen],['Backend',route.upstream],['Host',route.host||'Любой Host'],['Профиль',proxyProtocolLabel(route.protocol)],['Сертификат TLS',route.tls?.certificate_id||'Не используется'],
-    ['Режим WAF',wafLabel(waf.mode)],['Лимит и всплеск',`${waf.rate_per_second} запр./с · burst ${waf.burst}`],['Автобан',`${waf.violation_threshold} нарушений за ${waf.violation_window_seconds} с · бан ${waf.ban_ttl_seconds} с`],
+  const wafDetails:[string,string][]=waf.mode==='rate_limit'?
+    [['Лимит на IP',`${waf.rate_per_second} запр./с`],['Ответ при превышении',`HTTP 429 на ${simpleRatePause} с`],['Область лимита','Все маршруты сервиса']]:[
+    ['Лимит и всплеск',`${waf.rate_per_second} запр./с · burst ${waf.burst}`],['Автобан',`${waf.violation_threshold} нарушений за ${waf.violation_window_seconds} с · бан ${waf.ban_ttl_seconds} с`],
     ['Область лимита',waf.route_specific?'Отдельно для маршрута':'Общий лимит сервиса'],['IP-состояния',`${waf.max_ip_states} адресов · TTL ${waf.state_ttl_seconds} с · ${waf.overflow_mode}`],
     ['Исключения checker',(waf.exceptions||[]).map(value=>`${value.cidr} · rate ${value.bypass_rate?'исключён':'действует'} · autoban ${value.bypass_ban?'исключён':'действует'}${value.comment?' · '+value.comment:''}`).join('\n')||'Нет'],
+  ]
+  return [
+    ['Сервис / компонент',`${route.service_id} · ${route.component}`],['Внешний адрес',route.listen],['Backend',route.upstream],['Host',route.host||'Любой Host'],['Профиль',proxyProtocolLabel(route.protocol)],['Сертификат TLS',route.tls?.certificate_id||'Не используется'],
+    ['Режим WAF',wafLabel(waf.mode)],...wafDetails,
     ['Доверенные proxy',(route.trusted_proxy_cidrs||[]).join('\n')||'Нет · IP из TCP-соединения'],['Запись тел',capture.mode==='metadata'?'Только метаданные':`${capture.mode==='grpc_body'?'Сырые gRPC bytes без автоматического редактирования · ':''}до ${capture.max_body_bytes} байт на каждое тело`],
     ['Скрываемые заголовки',(capture.redact_headers||[]).join(', ')||'Обязательные секретные заголовки'],['Скрываемые query-поля',(capture.redact_query_fields||[]).join(', ')||'Стандартные секретные поля'],['Скрываемые поля тела',capture.mode==='grpc_body'?'К opaque protobuf не применяются; настроенные правила приводят к пропуску bytes':(capture.redact_body_fields||[]).join(', ')||'Стандартные секретные поля'],['Шаблоны скрытия',(capture.body_patterns||[]).join('\n')||'Нет дополнительных шаблонов'],
     ['Лимиты соединения',`${limits.max_concurrent} одновременно · заголовки ${limits.max_header_bytes} байт · срок ${limits.max_connection_seconds} с`],['Таймауты',`Заголовки ${limits.read_header_timeout_seconds} с · upstream ${limits.upstream_response_header_timeout_seconds} с · простой ${limits.idle_timeout_seconds} с`],['Передаваемое тело',limits.max_body_bytes?`${limits.max_body_bytes} байт`:'Без отдельного лимита тела'],
@@ -224,18 +284,35 @@ function TLSProfileFields({value,certificates,error,onChange}:{value:TLSSelectio
   </div>
 }
 
-function RouteEditor({value,existing,targets,certificates,certificateError,listenHint,observationListen='',onClose,onSave,cutoverTarget,privatePort,busy=false,submitError='',fixedBinding=false}:{value:ProxyRouteInput;existing:boolean;targets:ProxyTarget[];certificates:ProxyTLSCertificate[];certificateError:string;listenHint:string;observationListen?:string;onClose:()=>void;onSave:(route:ProxyRouteInput)=>void;cutoverTarget?:ProxyCutoverTarget;privatePort?:number;busy?:boolean;submitError?:string;fixedBinding?:boolean}){
+function RouteEditor({value,existing,targets,certificates,certificateError,listenHint,observationListen='',onClose,onSave,cutoverTarget,privatePort,busy=false,submitError='',fixedBinding=false,serviceRateFor,serviceRateAllowed}:{
+  value:ProxyRouteInput;existing:boolean;targets:ProxyTarget[];certificates:ProxyTLSCertificate[];certificateError:string;listenHint:string
+  observationListen?:string;onClose:()=>void;onSave:(route:ProxyRouteInput)=>void;cutoverTarget?:ProxyCutoverTarget;privatePort?:number;busy?:boolean
+  submitError?:string;fixedBinding?:boolean;serviceRateFor?:(serviceID:string)=>WafPolicy|undefined;serviceRateAllowed?:(serviceID:string)=>boolean
+}){
   const [route,setRoute]=useState(value),[validation,setValidation]=useState('')
-  const selected=targets.find(target=>targetKey(target)===targetKey(route))
+  const availableTargets=targets.filter(target=>existing?target.service_id===value.service_id&&target.component===value.component:target.private_binding||!serviceRateFor?.(target.service_id))
+  const selected=availableTargets.find(target=>targetKey(target)===targetKey(route))
   const observationOnly=!cutoverTarget&&selected?.private_binding===false
+  const simple=route.waf.mode==='rate_limit'
+  const inheritedRate=existing?undefined:serviceRateFor?.(route.service_id)
+  const simpleAllowed=existing&&!!selected?.private_binding&&!!serviceRateAllowed?.(route.service_id)
   const setWaf=<K extends keyof WafPolicy>(key:K,next:WafPolicy[K])=>setRoute(current=>({...current,waf:{...current.waf,[key]:next}}))
+  const changeWafMode=(mode:WafMode)=>{
+    setValidation('')
+    setRoute(current=>{
+      const waf=current.waf.mode==='rate_limit'&&mode!=='rate_limit'&&value.waf.mode==='rate_limit'?
+        {...defaultsWaf,rate_per_second:current.waf.rate_per_second}:current.waf
+      return {...current,waf:{...waf,mode}}
+    })
+  }
   const setCapture=<K extends keyof CapturePolicy>(key:K,next:CapturePolicy[K])=>setRoute(current=>({...current,capture:{...current.capture,[key]:next}}))
   const selectTarget=(key:string)=>{
-    const target=targets.find(value=>targetKey(value)===key)
+    const target=availableTargets.find(value=>targetKey(value)===key)
     if(!target)return
     setValidation('')
     setRoute(current=>{
-      const next={...current,service_id:target.service_id,component:target.component,upstream_port:target.upstream_port}
+      const waf=!existing&&current.service_id!==target.service_id?serviceRateFor?.(target.service_id)||defaultsWaf:current.waf
+      const next={...current,service_id:target.service_id,component:target.component,upstream_port:target.upstream_port,waf}
       if(target.private_binding)return next
       return {...next,listen:proxyLoopbackListener(next.listen)?next.listen:observationListen,waf:{...next.waf,mode:'observe_only'}}
     })
@@ -243,19 +320,55 @@ function RouteEditor({value,existing,targets,certificates,certificateError,liste
   const minimumStateTTL=Math.max(1,Math.ceil(route.waf.violation_window_seconds),route.waf.rate_per_second>0?Math.ceil(route.waf.burst/route.waf.rate_per_second):3601)
   const stateTTLInvalid=route.waf.state_ttl_seconds<minimumStateTTL||minimumStateTTL>3600
   const stateTTLMessage=minimumStateTTL>3600?'Сочетание лимита и всплеска требует хранения IP-состояния дольше 3600 с. Увеличьте число запросов в секунду или уменьшите всплеск.':`Для выбранного лимита и окна нарушений срок хранения IP-состояния должен быть не меньше ${minimumStateTTL} с.`
-  const submit=(event:FormEvent)=>{event.preventDefault();if(!cutoverTarget&&!selected){setValidation('Выберите подтверждённый backend.');return}if(observationOnly&&!proxyLoopbackListener(route.listen)){setValidation('Укажите loopback-адрес и порт для локального маршрута наблюдения.');return}if(route.protocol!=='http1'&&(!route.host?.trim()||!certificates.some(certificate=>certificate.id===route.tls?.certificate_id&&certificate.valid))){setValidation('Для HTTPS нужны точный Host и доступный действующий сертификат.');return}if(route.capture.mode==='grpc_body'&&route.protocol!=='https2'){setValidation('Сырые gRPC bytes доступны только в профиле HTTPS/2.');return}if(route.protocol==='https2'&&route.limits.max_concurrent>128){setValidation('HTTPS/2 поддерживает до 128 одновременных RPC на маршрут.');return}if(stateTTLInvalid){setValidation(stateTTLMessage);return}onSave(observationOnly?{...route,waf:{...route.waf,mode:'observe_only'}}:route)}
+  const submit=(event:FormEvent)=>{
+    event.preventDefault()
+    if(!cutoverTarget&&!selected){setValidation('Выберите подтверждённый backend.');return}
+    if(observationOnly&&!proxyLoopbackListener(route.listen)){setValidation('Укажите loopback-адрес и порт для локального маршрута наблюдения.');return}
+    if(route.protocol!=='http1'&&(!route.host?.trim()||!certificates.some(certificate=>certificate.id===route.tls?.certificate_id&&certificate.valid))){setValidation('Для HTTPS нужны точный Host и доступный действующий сертификат.');return}
+    if(route.capture.mode==='grpc_body'&&route.protocol!=='https2'){setValidation('Сырые gRPC bytes доступны только в профиле HTTPS/2.');return}
+    if(route.protocol==='https2'&&route.limits.max_concurrent>128){setValidation('HTTPS/2 поддерживает до 128 одновременных RPC на маршрут.');return}
+    if(simple){
+      if(!simpleAllowed&&!inheritedRate){setValidation('Лимит можно включить после применения маршрутов с закрытыми backend.');return}
+      if(!validSimpleRate(route.waf.rate_per_second)){setValidation(`Введите целое число запросов от 1 до ${simpleRateMax}.`);return}
+      onSave({...route,waf:inheritedRate||simpleRateWaf(route.waf.rate_per_second)})
+      return
+    }
+    if(stateTTLInvalid){setValidation(stateTTLMessage);return}
+    onSave(observationOnly?{...route,waf:{...route.waf,mode:'observe_only'}}:route)
+  }
   return <Modal open onClose={onClose} title={cutoverTarget?'Параметры переноса на proxy':existing?'Изменить маршрут':'Добавить HTTP-маршрут'} description={cutoverTarget?'Общие настройки HTTP, TLS и WAF для всех переносимых внешних адресов. Параметры сохраняются в черновике группы перед просмотром общего плана.':'Параметры будут добавлены в черновик и затем показаны в плане подтверждения.'} wide><form className="dialog-body proxy-route-form" onSubmit={submit}>{(validation||submitError)&&<Notice variant="error">{submitError||validation}</Notice>}
-    {cutoverTarget?<div className="proxy-cutover-addresses"><div><span>Сервис / компонент</span><strong>{cutoverTarget.service_name} · {cutoverTarget.component}</strong></div><div><span>Все внешние привязки → proxy</span><pre>{cutoverTarget.original_bindings.join('\n')}</pre></div><div><span>Будущий приватный backend</span><code>127.0.0.1:{privatePort} → {cutoverTarget.upstream_port}/tcp</code></div><small>Будут перенесены все перечисленные адреса. Для каждого создаётся маршрут с одинаковыми настройками и WAF в режиме наблюдения.</small></div>:<div className="form-columns"><label>Зарегистрированный backend<select required disabled={fixedBinding} value={selected?targetKey(selected):''} onChange={event=>selectTarget(event.target.value)}>{!selected&&<option value="" disabled>Выберите подтверждённый backend</option>}{targets.map(target=><option key={targetKey(target)} value={targetKey(target)}>{target.service_name} · {target.component} · {target.upstream_address}{target.private_binding===false?' · наблюдение за прямой публикацией':''}</option>)}</select></label><label>{observationOnly?'Локальный адрес и порт':'Внешний адрес и порт'}<input value={route.listen} required disabled={fixedBinding} maxLength={128} onChange={event=>setRoute(current=>({...current,listen:event.target.value}))} placeholder={observationOnly?observationListen||'127.0.0.1:19081':'0.0.0.0:18081'}/><small>{fixedBinding?'Привязка управляется мастером переноса игровых портов.':`Разрешённые адреса: ${listenHint||'заданы администратором'}.`}</small></label></div>}
+    {cutoverTarget?<div className="proxy-cutover-addresses"><div><span>Сервис / компонент</span><strong>{cutoverTarget.service_name} · {cutoverTarget.component}</strong></div><div><span>Все внешние привязки → proxy</span><pre>{cutoverTarget.original_bindings.join('\n')}</pre></div><div><span>Будущий приватный backend</span><code>127.0.0.1:{privatePort} → {cutoverTarget.upstream_port}/tcp</code></div><small>Будут перенесены все перечисленные адреса. Для каждого создаётся маршрут с одинаковыми настройками и WAF в режиме наблюдения.</small></div>:<div className="form-columns"><label>Зарегистрированный backend<select required disabled={fixedBinding} value={selected?targetKey(selected):''} onChange={event=>selectTarget(event.target.value)}>{!selected&&<option value="" disabled>Выберите подтверждённый backend</option>}{availableTargets.map(target=><option key={targetKey(target)} value={targetKey(target)}>{target.service_name} · {target.component} · {target.upstream_address}{target.private_binding===false?' · наблюдение за прямой публикацией':''}</option>)}</select></label><label>{observationOnly?'Локальный адрес и порт':'Внешний адрес и порт'}<input value={route.listen} required disabled={fixedBinding} maxLength={128} onChange={event=>setRoute(current=>({...current,listen:event.target.value}))} placeholder={observationOnly?observationListen||'127.0.0.1:19081':'0.0.0.0:18081'}/><small>{fixedBinding?'Привязка управляется мастером переноса игровых портов.':`Разрешённые адреса: ${listenHint||'заданы администратором'}.`}</small></label></div>}
     {observationOnly&&<Notice variant="warning">Сервис доступен и по прямому адресу. Журнал этого маршрута содержит только запросы через proxy. WAF работает в режиме наблюдения.</Notice>}
     <TLSProfileFields value={route} certificates={certificates} error={certificateError} onChange={value=>setRoute(current=>({...current,...value,capture:value.protocol!=='https2'&&current.capture.mode==='grpc_body'?{...current.capture,mode:'metadata'}:current.capture}))}/>
-    <h3>WAF</h3><div className="form-columns"><label>Режим<select value={observationOnly?'observe_only':route.waf.mode} disabled={observationOnly} onChange={event=>setWaf('mode',event.target.value as WafPolicy['mode'])}><option value="observe_only">Наблюдение</option><option value="off" disabled={!existing}>Отключён</option><option value="enforce" disabled={!existing}>Блокировка</option></select><small>{observationOnly?'Для прямой публикации доступно наблюдение.':'Новый маршрут запускается в режиме наблюдения.'}</small></label><label>Запросов в секунду<input type="number" required min="0.000001" max="100000" step="any" value={route.waf.rate_per_second} onChange={event=>setWaf('rate_per_second',Number(event.target.value))}/></label><label>Допустимый всплеск<input type="number" required min="1" max="100000" value={route.waf.burst} onChange={event=>setWaf('burst',Number(event.target.value))}/></label><label>Нарушений до автобана<input type="number" required min="1" max="10000" value={route.waf.violation_threshold} onChange={event=>setWaf('violation_threshold',Number(event.target.value))}/></label><label>Окно нарушений, с<input type="number" required min="1" max="3600" value={route.waf.violation_window_seconds} onChange={event=>setWaf('violation_window_seconds',Number(event.target.value))}/></label><label>Срок автобана, с<input type="number" required min="1" max="3600" value={route.waf.ban_ttl_seconds} onChange={event=>setWaf('ban_ttl_seconds',Number(event.target.value))}/></label></div>
-    <label className="inline-check"><input type="checkbox" checked={!!route.waf.route_specific} onChange={event=>setWaf('route_specific',event.target.checked)}/><span>Считать лимит отдельно для этого маршрута. По умолчанию все маршруты сервиса делят один IP-лимит.</span></label>
+    <h3>WAF</h3>
+    <div className="form-columns">
+      <label>Режим
+        <select value={observationOnly?'observe_only':route.waf.mode} disabled={observationOnly||!!inheritedRate} onChange={event=>changeWafMode(event.target.value as WafMode)}>
+          <option value="rate_limit" disabled={!simpleAllowed&&!inheritedRate}>Лимит запросов по IP</option>
+          <option value="observe_only">Наблюдение</option>
+          <option value="off" disabled={!existing}>Отключён</option>
+          <option value="enforce" disabled={!existing}>Блокировка · расширенная</option>
+        </select>
+        <small>{observationOnly?'Для прямой публикации доступно наблюдение.':inheritedRate?'Маршрут унаследует текущий лимит сервиса.':existing?'Лимит по IP применяется ко всем маршрутам сервиса.':'Лимит по IP можно включить после применения маршрута.'}</small>
+      </label>
+      <label>Запросов в секунду<input type="number" required min={simple?1:0.000001} max={simpleRateMax} step={simple?1:'any'} disabled={!!inheritedRate} value={route.waf.rate_per_second} onChange={event=>setWaf('rate_per_second',Number(event.target.value))}/></label>
+      {!simple&&<>
+        <label>Допустимый всплеск<input type="number" required min="1" max="100000" value={route.waf.burst} onChange={event=>setWaf('burst',Number(event.target.value))}/></label>
+        <label>Нарушений до автобана<input type="number" required min="1" max="10000" value={route.waf.violation_threshold} onChange={event=>setWaf('violation_threshold',Number(event.target.value))}/></label>
+        <label>Окно нарушений, с<input type="number" required min="1" max="3600" value={route.waf.violation_window_seconds} onChange={event=>setWaf('violation_window_seconds',Number(event.target.value))}/></label>
+        <label>Срок автобана, с<input type="number" required min="1" max="3600" value={route.waf.ban_ttl_seconds} onChange={event=>setWaf('ban_ttl_seconds',Number(event.target.value))}/></label>
+      </>}
+    </div>
+    {simple?<Notice>Каждый IP делит лимит между всеми маршрутами сервиса. При превышении прокси отвечает HTTP 429 в течение {simpleRatePause} секунд.</Notice>:<>
+      {value.waf.mode==='rate_limit'&&<Notice>Новый режим применяется ко всем маршрутам сервиса.</Notice>}
+      {value.waf.mode!=='rate_limit'&&<label className="inline-check"><input type="checkbox" checked={!!route.waf.route_specific} onChange={event=>setWaf('route_specific',event.target.checked)}/><span>Считать лимит отдельно для этого маршрута. По умолчанию все маршруты сервиса делят один IP-лимит.</span></label>}
     <label>Срок хранения IP-состояния (TTL), с<input type="number" required min="1" max="3600" value={route.waf.state_ttl_seconds} onChange={event=>setWaf('state_ttl_seconds',Number(event.target.value))}/><small>Не меньше окна нарушений и времени восстановления полного всплеска: {minimumStateTTL} с.</small></label>{stateTTLInvalid&&<Notice variant="warning">{stateTTLMessage}</Notice>}
     <h4>Исключения checker</h4><p className="muted">Исключение определяется подтверждённым IP/CIDR. Трафик по исключению продолжает записываться.</p><div className="proxy-exceptions">{route.waf.exceptions.map((exception,index)=><div key={index}><input aria-label={`CIDR исключения ${index+1}`} placeholder="192.0.2.10/32" required value={exception.cidr} onChange={event=>setWaf('exceptions',route.waf.exceptions.map((item,i)=>i===index?{...item,cidr:event.target.value}:item))}/><label className="inline-check"><input type="checkbox" checked={exception.bypass_rate} onChange={event=>setWaf('exceptions',route.waf.exceptions.map((item,i)=>i===index?{...item,bypass_rate:event.target.checked}:item))}/>Без rate limit</label><label className="inline-check"><input type="checkbox" checked={exception.bypass_ban} onChange={event=>setWaf('exceptions',route.waf.exceptions.map((item,i)=>i===index?{...item,bypass_ban:event.target.checked}:item))}/>Без автобана</label><input aria-label={`Комментарий исключения ${index+1}`} placeholder="Комментарий" maxLength={256} value={exception.comment||''} onChange={event=>setWaf('exceptions',route.waf.exceptions.map((item,i)=>i===index?{...item,comment:event.target.value}:item))}/><Button type="button" variant="ghost" aria-label={`Удалить исключение ${index+1}`} onClick={()=>setWaf('exceptions',route.waf.exceptions.filter((_,i)=>i!==index))}><Trash2 size={15}/></Button></div>)}</div><Button type="button" variant="outline" disabled={route.waf.exceptions.length>=32} onClick={()=>setWaf('exceptions',[...route.waf.exceptions,{cidr:'',bypass_rate:true,bypass_ban:true,comment:''}])}><Plus size={14}/>Исключение</Button>
+    </>}
     <h3>Запись трафика</h3><div className="form-columns"><label>Режим capture<select value={route.capture.mode} onChange={event=>setCapture('mode',event.target.value as CapturePolicy['mode'])}><option value="metadata">Только метаданные</option><option value="bounded_body">Ограниченные тела с редактированием</option>{route.protocol==='https2'&&<option value="grpc_body">Сырые gRPC bytes (явное включение)</option>}</select></label><label>Байт на каждое тело<input type="number" min="1" max="65536" step="1" required disabled={route.capture.mode==='metadata'} value={route.capture.max_body_bytes} onChange={event=>setCapture('max_body_bytes',Number(event.target.value))}/><small>Ограничивает сохранение, а не передаваемое тело.</small></label></div>
     {route.capture.mode==='grpc_body'&&<Notice variant="warning">Сохраняются неотредактированные gRPC сообщения после TLS termination: они могут содержать флаги и пароли. Доступ — sensitive access. Шаблоны и поля redaction для opaque protobuf неприменимы: при их настройке bytes будут опущены. WAF считает начало RPC, а не отдельные сообщения потока.</Notice>}
     {route.capture.mode==='bounded_body'&&<Notice>Записанные тела доступны пользователям с sensitive access. Неизвестный формат с неприменимым редактированием будет сохранён только как метаданные.</Notice>}
-    <details className="proxy-advanced"><summary>Редактирование, доверенные proxy и лимиты</summary><div className="form-columns"><label>Скрываемые заголовки<textarea rows={3} value={route.capture.redact_headers.join('\n')} onChange={event=>setCapture('redact_headers',lines(event.target.value))}/><small>Authorization, Cookie и другие секретные заголовки скрываются всегда.</small></label><label>Поля query для скрытия<textarea rows={3} value={route.capture.redact_query_fields.join('\n')} onChange={event=>setCapture('redact_query_fields',lines(event.target.value))}/></label><label>Поля тела для скрытия<textarea rows={3} value={route.capture.redact_body_fields.join('\n')} onChange={event=>setCapture('redact_body_fields',lines(event.target.value))}/></label><label>Шаблоны скрываемых данных (RE2)<textarea rows={3} value={route.capture.body_patterns.join('\n')} onChange={event=>setCapture('body_patterns',event.target.value.split('\n').filter(Boolean))} maxLength={8192}/></label></div><label>Доверенные непосредственные proxy, CIDR<textarea rows={3} value={(route.trusted_proxy_cidrs||[]).join('\n')} onChange={event=>setRoute(current=>({...current,trusted_proxy_cidrs:lines(event.target.value)}))}/><small>По умолчанию IP берётся из TCP-соединения; присланные клиентом X-Forwarded-For не считаются доверенными.</small></label><div className="form-columns"><label>Максимум IP-состояний<input type="number" min="1" max="65536" value={route.waf.max_ip_states} onChange={event=>setWaf('max_ip_states',Number(event.target.value))}/></label>{([['max_concurrent','Одновременных соединений',1,1024],['max_header_bytes','Лимит заголовков, байт',1024,262144],['read_header_timeout_seconds','Ожидание заголовков, с',1,60],['upstream_response_header_timeout_seconds','Заголовки upstream, с',1,300],['idle_timeout_seconds','Простой соединения, с',1,300],['max_connection_seconds','Срок соединения / WebSocket, с',1,3600],['max_body_bytes','Лимит передаваемого тела, байт (0 — без лимита)',0,1073741824]] as const).map(([key,label,min,max])=><label key={key}>{label}<input type="number" required min={min} max={key==='max_concurrent'&&route.protocol==='https2'?128:max} value={route.limits[key]} onChange={event=>setRoute(current=>({...current,limits:{...current.limits,[key]:Number(event.target.value)}}))}/></label>)}</div><p className="muted">При исчерпании IP-состояний режим блокировки отклоняет новые IP (reject_new). Существующие активные баны сохраняются.</p></details>
+    <details className="proxy-advanced"><summary>Редактирование, доверенные proxy и лимиты</summary><div className="form-columns"><label>Скрываемые заголовки<textarea rows={3} value={route.capture.redact_headers.join('\n')} onChange={event=>setCapture('redact_headers',lines(event.target.value))}/><small>Authorization, Cookie и другие секретные заголовки скрываются всегда.</small></label><label>Поля query для скрытия<textarea rows={3} value={route.capture.redact_query_fields.join('\n')} onChange={event=>setCapture('redact_query_fields',lines(event.target.value))}/></label><label>Поля тела для скрытия<textarea rows={3} value={route.capture.redact_body_fields.join('\n')} onChange={event=>setCapture('redact_body_fields',lines(event.target.value))}/></label><label>Шаблоны скрываемых данных (RE2)<textarea rows={3} value={route.capture.body_patterns.join('\n')} onChange={event=>setCapture('body_patterns',event.target.value.split('\n').filter(Boolean))} maxLength={8192}/></label></div><label>Доверенные непосредственные proxy, CIDR<textarea rows={3} value={(route.trusted_proxy_cidrs||[]).join('\n')} onChange={event=>setRoute(current=>({...current,trusted_proxy_cidrs:lines(event.target.value)}))}/><small>По умолчанию IP берётся из TCP-соединения; присланные клиентом X-Forwarded-For не считаются доверенными.</small></label><div className="form-columns">{!simple&&<label>Максимум IP-состояний<input type="number" min="1" max="65536" value={route.waf.max_ip_states} onChange={event=>setWaf('max_ip_states',Number(event.target.value))}/></label>}{([['max_concurrent','Одновременных соединений',1,1024],['max_header_bytes','Лимит заголовков, байт',1024,262144],['read_header_timeout_seconds','Ожидание заголовков, с',1,60],['upstream_response_header_timeout_seconds','Заголовки upstream, с',1,300],['idle_timeout_seconds','Простой соединения, с',1,300],['max_connection_seconds','Срок соединения / WebSocket, с',1,3600],['max_body_bytes','Лимит передаваемого тела, байт (0 — без лимита)',0,1073741824]] as const).map(([key,label,min,max])=><label key={key}>{label}<input type="number" required min={min} max={key==='max_concurrent'&&route.protocol==='https2'?128:max} value={route.limits[key]} onChange={event=>setRoute(current=>({...current,limits:{...current.limits,[key]:Number(event.target.value)}}))}/></label>)}</div>{!simple&&<p className="muted">При исчерпании IP-состояний режим блокировки отклоняет новые IP (reject_new). Существующие активные баны сохраняются.</p>}</details>
     <div className="dialog-footer"><Button type="button" variant="outline" disabled={busy} onClick={onClose}>Отмена</Button><Button type="submit" busy={busy}>{cutoverTarget?'Сохранить параметры порта':'В черновик'}</Button></div>
   </form></Modal>
 }
@@ -385,7 +498,7 @@ function CutoverPlan({preview,returning,serviceName,busy,error,blocked,onClose,o
   </div></Modal>
 }
 
-function BanDialog({routes,serviceName,onClose,onSaved}:{routes:ProxyRouteInput[];serviceName:(id:string)=>string;onClose:()=>void;onSaved:()=>void}){
+function BanDialog({routes,serviceName,onClose,onSaved}:{routes:Pick<ProxyRoute,'id'|'service_id'|'waf'>[];serviceName:(id:string)=>string;onClose:()=>void;onSaved:()=>void}){
   const [serviceID,setServiceID]=useState(routes[0]?.service_id||''),[routeID,setRouteID]=useState(''),[ip,setIP]=useState(''),[ttl,setTTL]=useState(60),[comment,setComment]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('')
   const submit=async(event:FormEvent)=>{event.preventDefault();setBusy(true);setError('');try{await post('/api/proxy/bans',{service_id:serviceID,route_id:routeID||undefined,ip,ttl_seconds:ttl,comment});onSaved()}catch(error){setError(errorText(error))}finally{setBusy(false)}}
   return <Modal open onClose={onClose} title="Временно заблокировать IP"><form className="dialog-body" onSubmit={submit}>{error&&<Notice variant="error">{error}</Notice>}<label>Сервис<select required value={serviceID} onChange={event=>{setServiceID(event.target.value);setRouteID('')}}>{[...new Set(routes.map(route=>route.service_id))].map(id=><option value={id} key={id}>{serviceName(id)}</option>)}</select></label><label>Область<select value={routeID} onChange={event=>setRouteID(event.target.value)}><option value="">Весь сервис</option>{routes.filter(route=>route.service_id===serviceID&&route.waf.route_specific).map(route=><option key={route.id} value={route.id}>{route.id}</option>)}</select></label><label>IP клиента<input required value={ip} maxLength={64} onChange={event=>setIP(event.target.value)} placeholder="192.0.2.10"/></label><label>Срок, с<input type="number" required min="1" max="3600" value={ttl} onChange={event=>setTTL(Number(event.target.value))}/></label><label>Причина<textarea rows={3} minLength={3} maxLength={500} required value={comment} onChange={event=>setComment(event.target.value)}/></label><div className="dialog-footer"><Button variant="outline" type="button" onClick={onClose}>Отмена</Button><Button variant="danger" type="submit" busy={busy}>Заблокировать</Button></div></form></Modal>

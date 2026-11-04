@@ -18,7 +18,7 @@ TLS-профиль `https1` поддерживает TLS 1.2+ и ALPN HTTP/1.1. 
 
 Общая WAF-политика service scope согласована между маршрутами всех портов; route-specific режим задаётся явно. HTTP/TLS/capture задаются для каждого target, точный Host — при необходимости для каждого внешнего listener, поскольку его значение включает нестандартный порт. Старые preview/overlays читаются как одна entry без изменения прежних digest.
 
-Есть streaming/SSE, WebSocket handshake и счётчики, bounded capture и redaction. Сжатое содержимое передаётся без изменения; его архивное тело опускается с причиной. WAF предоставляет off/observe/enforce, token bucket, 429/Retry-After, временные баны, unban и CIDR exceptions. Переполнение state — `reject_new`. Новые маршруты начинают observe_only; enforce требует отдельного подтверждения checker.
+Есть streaming/SSE, WebSocket handshake и счётчики, bounded capture и redaction. Сжатое содержимое передаётся без изменения; его архивное тело опускается с причиной. В простом режиме WAF задаётся один лимит запросов в секунду на IP для всех маршрутов сервиса. Превышение даёт `429` и пятисекундную паузу. Расширенный WAF предоставляет off/observe/enforce, token bucket, временные баны, unban и CIDR exceptions. Переполнение state — `reject_new`. Первые маршруты сервиса начинают с observe_only. Для включения блокировки нужно отдельно подтвердить проверку checker.
 
 Локальные race/API/RBAC/Unix/SQLite/frontend/packaging проверки дополняются реальным TLS-прогоном отдельных процессов. **Compose/CTF checker, реальные игровые данные при переносе и нагрузка `competition-4g` пока не приняты.** Пользователь отложил испытания VM. Матрица P01–P16 разделяет реализацию и эти незавершённые проверки.
 

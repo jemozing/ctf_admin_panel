@@ -12,19 +12,27 @@ import (
 	"time"
 )
 
+const (
+	wafRateLimitMode     = "rate_limit"
+	wafRateLimitScope    = "\x01rate_limit" // Outside the valid route ID alphabet.
+	wafRateLimitCooldown = 5 * time.Second
+)
+
 type ipState struct {
-	tokens                      float64
-	last, seen, window, expires time.Time
-	violations                  int
+	tokens                float64
+	last, window, expires time.Time
+	violations, requests  int
+	cooldown              bool
 }
 type wafState struct {
-	mu         sync.Mutex
-	directory  string
-	maxStates  int
-	states     map[string]*ipState
-	bans       map[string]Ban
-	lastSweep  time.Time
-	stateError bool
+	mu                        sync.Mutex
+	directory                 string
+	maxStates                 int
+	states                    map[string]*ipState
+	stateCounts               map[string]int
+	bans                      map[string]Ban
+	lastBanSweep, lastIPSweep time.Time
+	stateError                bool
 }
 type wafDecision struct {
 	blocked          bool
@@ -37,7 +45,7 @@ type persistedBans struct {
 }
 
 func newWAF(directory string, max int, lkgExists bool, now time.Time) *wafState {
-	w := &wafState{directory: directory, maxStates: max, states: map[string]*ipState{}, bans: map[string]Ban{}}
+	w := &wafState{directory: directory, maxStates: max, states: map[string]*ipState{}, stateCounts: map[string]int{}, bans: map[string]Ban{}}
 	var saved persistedBans
 	err := readJSON(filepath.Join(directory, "bans.json"), &saved)
 	if os.IsNotExist(err) && !lkgExists {
@@ -91,6 +99,10 @@ func (w *wafState) check(r Route, ip string, now time.Time) wafDecision {
 	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if p.Mode == wafRateLimitMode {
+		w.expireIPStates(now)
+		return w.checkRateLimit(r, ip, now)
+	}
 	deny := func(reason string, retry int) wafDecision {
 		d := wafDecision{decision: "would_block", reason: reason, retryAfter: retry}
 		if p.Mode == "enforce" {
@@ -112,7 +124,7 @@ func (w *wafState) check(r Route, ip string, now time.Time) wafDecision {
 		}
 	}
 	key := banKey(r.ServiceID, scopeRoute(r), ip)
-	if now.Sub(w.lastSweep) >= time.Second {
+	if now.Sub(w.lastBanSweep) >= time.Second {
 		changed := false
 		for k, b := range w.bans {
 			if !now.Before(b.ExpiresAt) {
@@ -120,20 +132,14 @@ func (w *wafState) check(r Route, ip string, now time.Time) wafDecision {
 				changed = true
 			}
 		}
-		for k, s := range w.states {
-			if !now.Before(s.expires) {
-				if _, active := w.bans[k]; !active {
-					delete(w.states, k)
-				}
-			}
-		}
-		w.lastSweep = now
+		w.lastBanSweep = now
 		if changed {
 			if err := w.persist(); err != nil {
 				return deny("waf_state_unavailable", 1)
 			}
 		}
 	}
+	w.expireIPStates(now)
 	if b, ok := w.bans[key]; ok && now.Before(b.ExpiresAt) && !bypassBan {
 		return deny("active_ban", maxInt(1, int(math.Ceil(b.ExpiresAt.Sub(now).Seconds()))))
 	}
@@ -142,18 +148,11 @@ func (w *wafState) check(r Route, ip string, now time.Time) wafDecision {
 	}
 	s := w.states[key]
 	if s == nil {
-		scopeCount := 0
-		prefix := r.ServiceID + "\x00" + scopeRoute(r) + "\x00"
-		for k := range w.states {
-			if strings.HasPrefix(k, prefix) {
-				scopeCount++
-			}
-		}
-		if len(w.states) >= w.maxStates || scopeCount >= p.MaxIPStates {
+		s = w.allocateIPState(key, p.MaxIPStates)
+		if s == nil {
 			return deny("ip_state_capacity", 1)
 		}
-		s = &ipState{tokens: float64(p.Burst), last: now, seen: now, window: now, expires: now.Add(time.Duration(p.StateTTLSeconds) * time.Second)}
-		w.states[key] = s
+		*s = ipState{tokens: float64(p.Burst), last: now, window: now}
 	}
 	elapsed := now.Sub(s.last).Seconds()
 	if elapsed < 0 {
@@ -161,7 +160,6 @@ func (w *wafState) check(r Route, ip string, now time.Time) wafDecision {
 	}
 	s.tokens = math.Min(float64(p.Burst), s.tokens+elapsed*p.RatePerSecond)
 	s.last = now
-	s.seen = now
 	s.expires = now.Add(time.Duration(p.StateTTLSeconds) * time.Second)
 	if s.tokens >= 1 {
 		s.tokens--
@@ -188,6 +186,67 @@ func (w *wafState) check(r Route, ip string, now time.Time) wafDecision {
 		return deny("autoban", p.BanTTLSeconds)
 	}
 	return deny("request_rate", retry)
+}
+
+func (w *wafState) checkRateLimit(r Route, ip string, now time.Time) wafDecision {
+	key := banKey(r.ServiceID, wafRateLimitScope, ip)
+	s := w.states[key]
+	if s == nil {
+		s = w.allocateIPState(key, r.WAF.MaxIPStates)
+		if s == nil {
+			return wafDecision{blocked: true, decision: "blocked", reason: "ip_state_capacity", retryAfter: 1}
+		}
+	}
+	// Concurrent requests may acquire the mutex in a different order from
+	// their timestamps. Keep the window and the cooldown moving forward.
+	if now.Before(s.last) {
+		now = s.last
+	}
+	s.last = now
+	if !now.Before(s.expires) {
+		s.requests = 0
+		s.cooldown = false
+		s.expires = now.Add(time.Second)
+	}
+	if s.cooldown {
+		return wafDecision{blocked: true, decision: "blocked", reason: "rate_limit_cooldown", retryAfter: int(math.Ceil(s.expires.Sub(now).Seconds()))}
+	}
+	if s.requests < int(r.WAF.RatePerSecond) {
+		s.requests++
+		return wafDecision{decision: "allowed"}
+	}
+	s.cooldown = true
+	s.expires = now.Add(wafRateLimitCooldown)
+	return wafDecision{blocked: true, decision: "blocked", reason: "request_rate", retryAfter: int(wafRateLimitCooldown.Seconds())}
+}
+
+func (w *wafState) allocateIPState(key string, maxScopeStates int) *ipState {
+	scope := key[:strings.LastIndexByte(key, '\x00')]
+	if len(w.states) >= w.maxStates || w.stateCounts[scope] >= maxScopeStates {
+		return nil
+	}
+	state := &ipState{}
+	w.states[key] = state
+	w.stateCounts[scope]++
+	return state
+}
+
+func (w *wafState) expireIPStates(now time.Time) {
+	if now.Sub(w.lastIPSweep) < time.Second {
+		return
+	}
+	w.lastIPSweep = now
+	for key, state := range w.states {
+		if now.Before(state.expires) || now.Before(w.bans[key].ExpiresAt) {
+			continue
+		}
+		delete(w.states, key)
+		scope := key[:strings.LastIndexByte(key, '\x00')]
+		w.stateCounts[scope]--
+		if w.stateCounts[scope] == 0 {
+			delete(w.stateCounts, scope)
+		}
+	}
 }
 
 func (w *wafState) list(service string, now time.Time) []Ban {

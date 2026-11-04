@@ -589,8 +589,12 @@ func (m *Manager) ProxyPreview(ctx context.Context, in transport.ProxyPreviewReq
 	}
 	wanted := proxyengine.Policy{SchemaVersion: 1, Revision: max(latest.Policy.Revision, observed.AppliedRevision) + 1, Routes: []proxyengine.Route{}}
 	existing := map[string]proxyengine.Route{}
+	serviceRates := map[string]float64{}
 	for _, r := range latest.Policy.Routes {
 		existing[r.ID] = r
+		if r.WAF.Mode == "rate_limit" {
+			serviceRates[r.ServiceID] = r.WAF.RatePerSecond
+		}
 	}
 	observesPublic := false
 	for _, r := range in.Routes {
@@ -620,13 +624,15 @@ func (m *Manager) ProxyPreview(ctx context.Context, in transport.ProxyPreviewReq
 			id = string(NewID("route-"))
 		}
 		old, exists := existing[id]
-		if !exists && r.WAF.Mode != "" && r.WAF.Mode != "observe_only" {
+		serviceRate, hasServiceRate := serviceRates[string(r.ServiceID)]
+		inheritsRate := hasServiceRate && r.WAF.Mode == "rate_limit" && r.WAF.RatePerSecond == serviceRate
+		if !exists && !inheritsRate && r.WAF.Mode != "" && r.WAF.Mode != "observe_only" {
 			return empty, proxyInput("A new route must start in observe_only mode")
 		}
 		if exists && (old.ServiceID != string(r.ServiceID) || old.Component != r.Component) {
 			return empty, proxyInput("An existing route cannot be reassigned to another service or component")
 		}
-		if r.WAF.Mode == "enforce" && !in.ConfirmChecker {
+		if (r.WAF.Mode == "enforce" || r.WAF.Mode == "rate_limit") && !in.ConfirmChecker {
 			return empty, proxyInput("Confirm checker and observe-only verification before enabling enforcement")
 		}
 		wanted.Routes = append(wanted.Routes, proxyengine.Route{ID: id, ServiceID: string(r.ServiceID), Component: r.Component, Listen: net.JoinHostPort(addr.Unmap().String(), strconv.Itoa(p)), Host: r.Host, Upstream: target.UpstreamAddress, Protocol: r.Protocol, TLS: r.TLS, TrustedProxyCIDRs: r.TrustedProxyCIDRs, Capture: r.Capture, WAF: r.WAF, Limits: r.Limits})
@@ -649,7 +655,7 @@ func (m *Manager) ProxyPreview(ctx context.Context, in transport.ProxyPreviewReq
 	if len(proposals) >= 1024 {
 		return empty, proxyInput("Proxy preview history budget is exhausted")
 	}
-	warnings := []string{"This plan adds proxy listeners without moving existing game ports.", "Checker/NAT exceptions and limits must be verified before enforce."}
+	warnings := []string{"This plan changes proxy routes without moving existing game ports.", "Check the game checker and clients behind shared IP addresses before enabling request blocking."}
 	if observesPublic {
 		warnings = append(warnings, "Requests to the existing direct ports bypass the proxy and its traffic log.")
 	}

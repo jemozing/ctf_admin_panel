@@ -27,6 +27,7 @@ func TestPublicProxyBackendRequiresLoopbackObservation(t *testing.T) {
 		{"127.0.0.1", "observe_only", true},
 		{"::1", "", true},
 		{"127.0.0.1", "enforce", false},
+		{"127.0.0.1", "rate_limit", false},
 		{"127.0.0.1", "off", false},
 		{"0.0.0.0", "observe_only", false},
 		{"192.0.2.1", "observe_only", false},

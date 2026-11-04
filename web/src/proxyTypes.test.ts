@@ -1,11 +1,33 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import {proxyCutoverApplicationEvidence,proxyCutoverGroupEvidence,proxyCutoverGroupRequest,proxyCutoverGroupTargets,proxyCutoverUpdateSettings,proxyCutoverListener,proxyCutoverRoutes,proxyListenAddress,proxyLoopbackListener,proxyRouteChanges,proxyRouteID,proxyRouteInput,trafficBytes,trafficHex,trafficQuery} from './proxyTypes.ts'
-import type {ProxyCutoverContainer,ProxyCutoverDraftTarget,ProxyCutoverTargets,ProxyRoute,TrafficBody,TrafficFilters} from './proxyTypes.ts'
+import {proxyCutoverApplicationEvidence,proxyCutoverGroupEvidence,proxyCutoverGroupRequest,proxyCutoverGroupTargets,proxyCutoverUpdateSettings,proxyCutoverListener,proxyCutoverRoutes,proxyListenAddress,proxyLoopbackListener,proxyRouteChanges,proxyRouteDraft,proxyRouteID,proxyRouteInput,proxyServiceRatePolicy,trafficBytes,trafficHex,trafficQuery,wafBlocks} from './proxyTypes.ts'
+import type {ProxyCutoverContainer,ProxyCutoverDraftTarget,ProxyCutoverTargets,ProxyRoute,TrafficBody,TrafficFilters,WafPolicy} from './proxyTypes.ts'
 
 const filters:TrafficFilters={services:[],route:'',from:'',until:'',ip:'',method:'',status:'',url:'',waf:''}
 const body:TrafficBody={observed_bytes:0,captured_bytes:0,truncated:false}
 const route:ProxyRoute={id:'route-test',service_id:'game',component:'web',listen:'0.0.0.0:18081',upstream:'http://127.0.0.1:18011',protocol:'http1',capture:{mode:'metadata',max_body_bytes:65536,redact_headers:[],redact_query_fields:[],redact_body_fields:[],body_patterns:[]},waf:{mode:'observe_only',rate_per_second:20,burst:40,violation_threshold:10,violation_window_seconds:60,ban_ttl_seconds:60,max_ip_states:4096,state_ttl_seconds:300,overflow_mode:'reject_new',exceptions:[]},limits:{max_concurrent:128,max_header_bytes:65536,read_header_timeout_seconds:5,upstream_response_header_timeout_seconds:30,idle_timeout_seconds:60,max_connection_seconds:300,max_body_bytes:0}}
+
+test('simple rate policy replaces every WAF scope of its service and requires checker verification',()=>{
+  const first=proxyRouteInput(route,[])
+  const second={...first,id:'route-secondary',listen:'0.0.0.0:18082',waf:{...first.waf,route_specific:true}}
+  const other={...first,id:'route-other',service_id:'other'}
+  const rate:WafPolicy={...first.waf,mode:'rate_limit',rate_per_second:3}
+  const limited=proxyRouteDraft([first,second,other],{...first,waf:rate})
+  assert.deepEqual(limited,[{...first,waf:rate},{...second,waf:rate},other])
+  assert.equal(proxyServiceRatePolicy(limited,'game'),rate)
+  assert.equal(proxyServiceRatePolicy(limited,'other'),undefined)
+  assert.equal(wafBlocks(rate.mode),true)
+  assert.equal(wafBlocks(first.waf.mode),false)
+  assert.deepEqual(proxyRouteDraft(limited,first),[first,{...second,waf:first.waf},other])
+})
+
+test('changes to an advanced shared WAF policy preserve per-route overrides',()=>{
+  const first=proxyRouteInput(route,[])
+  const shared={...first,id:'route-shared'}
+  const separate={...first,id:'route-separate',waf:{...first.waf,route_specific:true}}
+  const updated={...first,waf:{...first.waf,burst:17}}
+  assert.deepEqual(proxyRouteDraft([first,shared,separate],updated),[updated,{...shared,waf:updated.waf},separate])
+})
 
 test('traffic query keeps repeated service filters and reserved URL text distinct',()=>{
   const query=new URLSearchParams(trafficQuery({...filters,services:['svc-b','svc-a','svc-a'],ip:'::ffff:192.0.2.1',method:'POST',status:'4xx',url:'/api/?token=x&service_id=wrong',waf:'blocked'},'opaque+/='))
