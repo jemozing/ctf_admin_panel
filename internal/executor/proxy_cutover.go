@@ -467,6 +467,9 @@ func (m *Manager) ProxyCutoverPreview(ctx context.Context, in transport.ProxyCut
 	}
 	seen, ids := map[string]bool{}, map[string]bool{}
 	for _, r := range wanted.Routes {
+		if m.Config.Proxy.AllowPublicBackendObservation && r.ServiceID == string(s.ID) {
+			return empty, proxyInput("Remove existing HTTP Proxy routes for this service before transferring its ports")
+		}
 		ids[r.ID] = true
 		for _, b := range bindings {
 			if r.Listen == b {

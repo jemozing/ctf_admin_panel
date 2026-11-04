@@ -1,12 +1,16 @@
 package executor
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"net/netip"
+	"net/url"
+	"strconv"
 
 	"github.com/ctf-service-manager/ctf-service-manager/internal/docker"
 	"github.com/ctf-service-manager/ctf-service-manager/internal/domain"
+	proxyengine "github.com/ctf-service-manager/ctf-service-manager/internal/proxy"
 	"github.com/ctf-service-manager/ctf-service-manager/internal/transport"
 	"github.com/moby/moby/client"
 )
@@ -67,7 +71,37 @@ func (m *Manager) checkComposePorts(ctx context.Context, s domain.Service, befor
 		if err != nil {
 			return errors.New("HTTP Proxy listener inventory is unavailable")
 		}
+		if m.Config.Proxy.AllowPublicBackendObservation {
+			var status proxyengine.Status
+			if err := m.proxyRPC(ctx, "GET", "/v1/status", nil, &status); err != nil ||
+				status.AppliedRevision != revision.Policy.Revision || status.PolicyDigest != proxyengine.PolicyDigest(revision.Policy) {
+				return composePortConflict(ports[0], "wait for the current HTTP Proxy policy to become active")
+			}
+		}
 		for _, route := range revision.Policy.Routes {
+			if m.Config.Proxy.AllowPublicBackendObservation {
+				if route.ServiceID == string(s.ID) {
+					return composePortConflict(ports[0], "remove this service's HTTP Proxy routes before changing its published ports")
+				}
+				upstream, err := url.Parse(route.Upstream)
+				if err != nil {
+					return errors.New("HTTP Proxy upstream inventory is unavailable")
+				}
+				ip, err := netip.ParseAddr(upstream.Hostname())
+				if err != nil {
+					return errors.New("HTTP Proxy upstream inventory is unavailable")
+				}
+				number, err := strconv.ParseUint(cmp.Or(upstream.Port(), "80"), 10, 16)
+				if err != nil {
+					return errors.New("HTTP Proxy upstream inventory is unavailable")
+				}
+				binding := docker.PublishedPortBinding{HostIP: ip.Unmap(), Published: uint16(number), Protocol: "tcp"}
+				for _, port := range ports {
+					if port.Overlaps(binding) {
+						return composePortConflict(port, "host port is reserved by an HTTP Proxy backend")
+					}
+				}
+			}
 			listen, err := netip.ParseAddrPort(route.Listen)
 			if err != nil {
 				return errors.New("HTTP Proxy listener inventory is unavailable")

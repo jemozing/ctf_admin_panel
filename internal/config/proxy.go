@@ -12,18 +12,19 @@ import (
 // ProxyPolicy is an opt-in, administrator-owned installation boundary. Browser
 // input never selects control URLs, credentials, output files or listen ranges.
 type ProxyPolicy struct {
-	Enabled          bool     `json:"enabled"`
-	PolicyDirectory  string   `json:"policy_directory"`
-	ControlURL       string   `json:"control_url"`
-	ControlTokenFile string   `json:"control_token_file"`
-	TrafficURL       string   `json:"traffic_url"`
-	TrafficTokenFile string   `json:"traffic_token_file"`
-	AllowedListenIPs []string `json:"allowed_listen_ips"`
-	ListenPortMin    int      `json:"listen_port_min"`
-	ListenPortMax    int      `json:"listen_port_max"`
-	BackendPortMin   int      `json:"backend_port_min,omitempty"`
-	BackendPortMax   int      `json:"backend_port_max,omitempty"`
-	ProxyGID         int      `json:"proxy_gid"`
+	AllowPublicBackendObservation bool     `json:"allow_public_backend_observation,omitempty"`
+	Enabled                       bool     `json:"enabled"`
+	PolicyDirectory               string   `json:"policy_directory"`
+	ControlURL                    string   `json:"control_url"`
+	ControlTokenFile              string   `json:"control_token_file"`
+	TrafficURL                    string   `json:"traffic_url"`
+	TrafficTokenFile              string   `json:"traffic_token_file"`
+	AllowedListenIPs              []string `json:"allowed_listen_ips"`
+	ListenPortMin                 int      `json:"listen_port_min"`
+	ListenPortMax                 int      `json:"listen_port_max"`
+	BackendPortMin                int      `json:"backend_port_min,omitempty"`
+	BackendPortMax                int      `json:"backend_port_max,omitempty"`
+	ProxyGID                      int      `json:"proxy_gid"`
 }
 
 // BackendPorts is a separate host-loopback allocation boundary. Older opt-in

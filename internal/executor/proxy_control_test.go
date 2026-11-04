@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,6 +16,26 @@ import (
 	"github.com/ctf-service-manager/ctf-service-manager/internal/store"
 	"github.com/ctf-service-manager/ctf-service-manager/internal/transport"
 )
+
+func TestPublicProxyBackendRequiresLoopbackObservation(t *testing.T) {
+	for _, tc := range []struct {
+		listen, waf string
+		allowed     bool
+	}{
+		{"127.0.0.1", "observe_only", true},
+		{"::1", "", true},
+		{"127.0.0.1", "enforce", false},
+		{"127.0.0.1", "off", false},
+		{"0.0.0.0", "observe_only", false},
+		{"192.0.2.1", "observe_only", false},
+	} {
+		target := transport.ProxyTarget{PrivateBinding: false}
+		err := validateProxyBackendMode(target, netip.MustParseAddr(tc.listen), tc.waf)
+		if (err == nil) != tc.allowed {
+			t.Errorf("listener %s with WAF %q: %v", tc.listen, tc.waf, err)
+		}
+	}
+}
 
 // No Docker client is constructed: an empty registry still exercises the real
 // database, preview digest, authenticated control API, and policy publication.
