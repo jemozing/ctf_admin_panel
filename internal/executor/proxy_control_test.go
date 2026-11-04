@@ -7,6 +7,8 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,6 +89,31 @@ func proxyEmptyPreview(t *testing.T, m *Manager, revision uint64) transport.Prox
 		t.Fatal(err)
 	}
 	return p
+}
+
+func TestProxyPreviewUsesExactListenerAuthorityWithoutBypassingTargetVerification(t *testing.T) {
+	m, _ := proxyControlFixture(t)
+	m.Config.Proxy.AllowedListenEndpoints = []string{"0.0.0.0:8070", "[::]:8070"}
+	targets, err := m.ProxyTargets(t.Context())
+	if err != nil || !slices.Equal(targets.AllowedListenEndpoints, m.Config.Proxy.AllowedListenEndpoints) {
+		t.Fatalf("exact listeners missing from targets: %+v, %v", targets, err)
+	}
+	for _, tc := range []struct {
+		endpoint string
+		failure  string
+	}{
+		{"0.0.0.0:8070", "unique verified publication"}, {"[::]:8070", "unique verified publication"},
+		{"127.0.0.1:18080", "unique verified publication"}, {"127.0.0.1:8070", "administrator-approved"},
+		{"0.0.0.0:18080", "administrator-approved"}, {"[::]:8071", "administrator-approved"},
+	} {
+		_, err := m.ProxyPreview(t.Context(), transport.ProxyPreviewRequest{
+			ExpectedRevision: 1, Initiator: "admin-test",
+			Routes: []transport.ProxyRouteInput{{Listen: tc.endpoint, ServiceID: "missing-service", Component: "app", UpstreamPort: 8070}},
+		})
+		if err == nil || !strings.Contains(err.Error(), tc.failure) {
+			t.Errorf("Preview(%s) = %v, want failure containing %q", tc.endpoint, err, tc.failure)
+		}
+	}
 }
 
 func proxyPublishedPolicy(t *testing.T, m *Manager) proxyengine.Policy {

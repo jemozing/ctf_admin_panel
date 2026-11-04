@@ -84,12 +84,30 @@ class ProxyPackagingTests(unittest.TestCase):
             self.assertTrue(fragment["control_url"].startswith("unix:///"))
             self.assertTrue(fragment["traffic_url"].startswith("unix:///"))
             self.assertEqual((fragment["backend_port_min"],fragment["backend_port_max"]),(29080,29111))
+            self.assertNotIn("allowed_listen_endpoints", fragment)
             override = json.loads((root / "executor-proxy.override.yaml").read_text())
             executor = override["services"]["executor"]
             self.assertNotIn("network_mode", executor)
             self.assertEqual(len(executor["volumes"]), 5)
             self.assertEqual([m["read_only"] for m in executor["volumes"]], [False, True, True, True, True])
             self.assertFalse(json.loads(output.getvalue())["containers_started"])
+
+    def test_bootstrap_approves_exact_endpoints_and_avoids_them_for_backend_defaults(self):
+        previous_umask = os.umask(0o077)
+        os.umask(previous_umask)
+        self.addCleanup(os.umask, previous_umask)
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "proxy"
+            argv = ["proxy-bootstrap", "--root", str(root), "--listen-ip", "127.0.0.1",
+                    "--listen-endpoint", "0.0.0.0:8070", "--listen-endpoint", "[::]:29100"]
+            with patch.object(BOOTSTRAP.sys, "platform", "linux"), patch.object(BOOTSTRAP.os, "geteuid", return_value=0), \
+                    patch.object(BOOTSTRAP, "validate_root"), patch.object(BOOTSTRAP.os, "chown"), \
+                    patch.object(BOOTSTRAP.os, "fchown"), patch.object(sys, "argv", argv), contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(BOOTSTRAP.main(), 0)
+            fragment = json.loads((root / "executor-proxy.json").read_text())["proxy"]
+            self.assertEqual(fragment["allowed_listen_ips"], ["127.0.0.1"])
+            self.assertEqual(fragment["allowed_listen_endpoints"], ["0.0.0.0:8070", "[::]:29100"])
+            self.assertEqual((fragment["backend_port_min"], fragment["backend_port_max"]), (39080, 39111))
 
     def test_bootstrap_refuses_existing_or_system_root(self):
         for root in (Path("/"), Path("/srv"), Path("/etc/new-proxy")):

@@ -30,3 +30,18 @@ func TestProxyBackendPortsKeepAuthorityBoundedAndSeparate(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestProxyBackendPortRangeAvoidsExactListeners(t *testing.T) {
+	c := proxyBootstrapFixture()
+	c.Proxy.AllowedListenEndpoints = []string{"0.0.0.0:29100"}
+	if min, max := c.Proxy.BackendPorts(); min != 39080 || max != 39111 {
+		t.Fatalf("implicit backend range %d..%d collides with an exact listener", min, max)
+	}
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c.Proxy.BackendPortMin, c.Proxy.BackendPortMax = 29080, 29111
+	if err := c.Validate(); err == nil {
+		t.Fatal("accepted explicit backend range overlapping an exact listener")
+	}
+}

@@ -5,13 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 
 	"github.com/ctf-service-manager/ctf-service-manager/internal/docker"
 	"github.com/ctf-service-manager/ctf-service-manager/internal/domain"
+	"github.com/ctf-service-manager/ctf-service-manager/internal/transport"
 )
 
 // A port overlay is independent of release/configuration identities. Releases
@@ -109,7 +112,7 @@ func (m *Manager) runtimeConfiguration(ctx context.Context, s domain.Service, c 
 func cutoverModelPorts(component map[string]any) ([]map[string]any, error) {
 	ports, ok := component["ports"].([]any)
 	if !ok || len(ports) == 0 || len(ports) > 32 {
-		return nil, errors.New("cutover requires one explicit bounded TCP publication set")
+		return nil, errors.New("cutover requires a bounded set of fixed TCP publications")
 	}
 	out := make([]map[string]any, 0, len(ports))
 	for _, raw := range ports {
@@ -143,8 +146,14 @@ func cutoverModelPorts(component map[string]any) ([]map[string]any, error) {
 		copy["target"] = float64(target)
 		copy["published"] = strconv.Itoa(published)
 		copy["protocol"] = "tcp"
-		if ip, _ := copy["host_ip"].(string); ip == "" {
-			copy["host_ip"] = "0.0.0.0"
+		if raw, exists := copy["host_ip"]; exists {
+			ip, ok := raw.(string)
+			if !ok {
+				return nil, errors.New("publication host_ip must be a literal address or omitted")
+			}
+			if ip == "" {
+				delete(copy, "host_ip")
+			}
 		}
 		delete(copy, "mode")
 		out = append(out, copy)
@@ -297,6 +306,40 @@ func cutoverPortStrings(ports []map[string]any) []string {
 }
 
 func cutoverContainerPortsEqual(c docker.Container, ports []map[string]any) bool {
+	return cutoverObservedPortsEqual(c, cutoverPortStrings(ports))
+}
+
+// Docker may realize one implicit publication as IPv4 and IPv6 listeners.
+// Keep the original Compose shape for recreation and verify its exact
+// effective listener set using the separately frozen Docker evidence.
+func cutoverOriginalPortsEqual(c docker.Container, entry runtimePortOverlayEntry, targets []transport.ProxyCutoverTargetPlan) bool {
+	implicit := slices.ContainsFunc(entry.Original, func(port map[string]any) bool {
+		ip, _ := port["host_ip"].(string)
+		return ip == ""
+	})
+	if !implicit {
+		// Historical proposals contain literal host_ip values and need no
+		// separate Targets evidence to check their exact publication set.
+		return cutoverContainerPortsEqual(c, entry.Original)
+	}
+	expected := []string{}
+	for _, target := range targets {
+		if target.Component != entry.Component {
+			continue
+		}
+		for _, binding := range target.OriginalBindings {
+			host, published, err := net.SplitHostPort(binding)
+			if err != nil {
+				return false
+			}
+			expected = append(expected, fmt.Sprintf("%s:%s->%d/tcp", host, published, target.UpstreamPort))
+		}
+	}
+	sort.Strings(expected)
+	return len(expected) > 0 && cutoverObservedPortsEqual(c, expected)
+}
+
+func cutoverObservedPortsEqual(c docker.Container, expected []string) bool {
 	actual := make([]string, 0, len(c.Ports))
 	for _, raw := range c.Ports {
 		ip, pub, target, _, ok := privatePublication(raw)
@@ -306,7 +349,7 @@ func cutoverContainerPortsEqual(c docker.Container, ports []map[string]any) bool
 		actual = append(actual, fmt.Sprintf("%s:%d->%d/tcp", ip, pub, target))
 	}
 	sort.Strings(actual)
-	return reflect.DeepEqual(actual, cutoverPortStrings(ports))
+	return reflect.DeepEqual(actual, expected)
 }
 
 // Group verification retains the baseline image/mount evidence for every
