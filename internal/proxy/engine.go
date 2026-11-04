@@ -338,8 +338,26 @@ func (e *Engine) setPolicyError(rev uint64, message string) {
 	e.status.LastError = message
 }
 func (e *Engine) Status() Status {
+	return e.statusSnapshot(false).Status
+}
+
+type controlStatus struct {
+	Status
+	PublicPortsByService map[string][]int `json:"public_ports_by_service"`
+}
+
+func (e *Engine) statusSnapshot(includePublicPorts bool) controlStatus {
 	e.mu.Lock()
-	s := e.status
+	s := controlStatus{Status: e.status}
+	if includePublicPorts && s.Available {
+		s.PublicPortsByService = make(map[string][]int)
+		for _, route := range e.active.Load().policy.Routes {
+			ip, port, err := splitListen(route.Listen)
+			if err == nil && !ip.IsLoopback() {
+				s.PublicPortsByService[route.ServiceID] = append(s.PublicPortsByService[route.ServiceID], port)
+			}
+		}
+	}
 	e.mu.Unlock()
 	e.waf.mu.Lock()
 	s.WAFDegraded = e.waf.stateError

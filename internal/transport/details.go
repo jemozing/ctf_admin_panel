@@ -25,6 +25,7 @@ type SnapshotSummary struct {
 type ServiceDetails struct {
 	Service           domain.Service        `json:"service"`
 	Containers        []docker.Container    `json:"containers"`
+	ExternalPorts     []ExternalPort        `json:"external_ports"`
 	CurrentReleaseID  domain.ID             `json:"current_release_id,omitempty"`
 	CandidateID       domain.ID             `json:"candidate_id,omitempty"`
 	Releases          []domain.Release      `json:"releases"`
@@ -34,6 +35,10 @@ type ServiceDetails struct {
 	Health            []domain.HealthSignal `json:"health"`
 	Drift             DriftObservation      `json:"drift"`
 	ComponentVersions []ComponentVersion    `json:"component_versions"`
+}
+type ExternalPort struct {
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
 }
 type LogResult struct {
 	Content   string `json:"content"`
